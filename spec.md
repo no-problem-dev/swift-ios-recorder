@@ -33,7 +33,7 @@ Layer 3: 下流の消費者（Mac companion・別バイナリ）
 
 | ポート | 抽象化する関心 | 現行実装 | 差し替え候補 |
 |---|---|---|---|
-| `Source` | 何を計測するか | `ScreenshotSource`（予定） | state / log / network / view 階層 / 動画 |
+| `Source` | 何を計測するか | `ScreenshotSource` / `StateSource` / `LogSource` / `NetworkSource` / `TypedStateSource<Value>` / `EventSource<Value>` | view 階層 / 動画 |
 | `RecordStore` | どこに保持するか | `RingBufferStore`（オンデバイス） / `FileRecordStore`（Mac） | SQLite, GRDB |
 | `Exporter` / `RecordReceiver` | どう通信するか | `BonjourExporter`（実装予定） | iCloud, gRPC, WebSocket |
 | `RecordCodec` | どう直列化するか | `JSONRecordCodec` | Protobuf, MessagePack |
@@ -43,6 +43,7 @@ Layer 3: 下流の消費者（Mac companion・別バイナリ）
 - `Record` — ある瞬間に保持された観測単位（id, session, recordedAt, metadata, artifacts）
 - `Artifact` — 中身の単位。`kind`（typed）+ `mediaType` + 不透明な `data` + 検索用 `attributes`
   - **拡張性の核**: data をコアにとって不透明にしたことで、通信・保存・MCP は新しい artifact 種を知らずにそのまま流せる（OCP）。新種の追加は「生産者（Source）」と「消費者」の両端だけ
+  - **任意構造体の計測**: `TypedStateSource<Value: Encodable>` / `EventSource<Value>` で任意の値を差し込める。`kind` を族（`agent_response` 等）で分けると `RecordQuery.kinds` で絞り込め、Swift 型名は `attributes["type"]` に自動で刻まれて MCP 出力に `[kind <型名>]` として現れる。`.network` は core を触らず生産者ターゲット（`iOSRecorderNetwork`）側で定義する OCP の実例
 - `RecordMetadata` — 検索対象（screenName, appVersion, tags, attributes）
 - `RecordSummary` — 一覧用の軽量表現（artifact の data を含まない）
 - `RecordQuery` — ストレージ非依存の検索条件（session / screenName / kinds / timeRange / text / limit）
@@ -53,6 +54,8 @@ Layer 3: 下流の消費者（Mac companion・別バイナリ）
 ```
 iOSRecorder（コア・依存ゼロ）← 全員がここに依存
   ├─ iOSRecorderUI         （SwiftUI 統合・フロートボタン・アプリ内ビューア）
+  ├─ iOSRecorderScreenshot （ScreenshotSource）
+  ├─ iOSRecorderNetwork    （URLProtocol 傍受 + NetworkSource で .network artifact 化）
   ├─ iOSRecorderBonjour    （Exporter / RecordReceiver 実装）
   ├─ iOSRecorderStore      （RecordStore のファイル実装。1 record = 1 フォルダ）
   └─ iOSRecorderMCP        （RecordStore を list/get に橋渡し）
@@ -93,6 +96,14 @@ push やブロッキングは使わない。Claude が必要な時に取りに�
 4. **M4 ✅** `iOSRecorderMCP` を依存ゼロの JSON-RPC over stdio で実装（`list_captures`/`get_capture`、image は base64 content）
 5. **M2 ✅** `iOSRecorderUI` のフロートボタン/シェイク/アプリ内ビューア（`RecorderController` はテスト済み）
 6. **結線 ✅** `ios-recorder serve`（Bonjour 受信→FileRecordStore）/ `ios-recorder mcp`（stdio）
+7. **M6 ✅** `NetworkSource`（`iOSRecorderNetwork` に `iOSRecorder` 依存を足し、`NetworkLog: Codable` 化 + サニタイズ済みスナップショットを `.network` artifact に畳む）→ 通信が MCP の `get_capture` で見える
+8. **M7 ✅** `TypedStateSource<Value>` / `EventBuffer<Value>`+`EventSource<Value>`（任意 Encodable を型名付きで計測。push（capture 時点）と pull の両モデル）
+9. **M8 ✅** MCP `get_capture` が非画像 artifact に `[kind <型名>]` を付与、非テキストは base64 でフォールバック
+10. **M9 ✅** 配送の観測性：`Session` が export 結果を握り潰さず記録（`ExportOutcome`/`DeliveryState`）、`Exporter.label`、iPhone パネルに delivered/pending バッジと未送件数。`ExportReachability` を「発見」から「実 TCP 接続」判定に変更
+11. **M10 ✅** 配送の堅牢化（テザリング耐性）：`OutboxExporter`（送信失敗を永続退避→到達回復で自動再送、合成 Exporter）、`BonjourExporter` の解決済み host:port キャッシュ + 失敗時再発見。MCP に `connection_status`（受信機健全性・最終受信時刻）/ `restart_receiver`（listener 貼り直し）、exe に `ReceiverHub`
+14. **M13 ✅** 任意データの構造表示＋メトリクス可視化：詳細ビューが payload を `swift-structured-data` の `StructuredValue` に解析して再帰的に折り畳み表示（型別色分け・選択コピー）。`DebugEvent` に `encoding:`/`text:` イニシャライザ追加で「全データ」を保持。汎用メトリクス可視化フレームワーク（`MetricUnit`/`MetricItem`/`MetricSeries`/`MetricsReport`/`MetricsStore` + `MetricsDashboardView`）= Swift Charts・通貨切替(USD/JPY)・倍率(×1/10/100/1000)・色分け。ドメイン（LLM コスト/トークン）は利用側が `MetricsReport` を組んで差し込む（recorder は非依存）
+13. **M12 ✅** デバッグ計測システム：`DebugEvent`（時刻付き正規化封筒）/ `DebugLog`(@Observable ライブバッファ) / `DebugProbe`(生産者) / `DebugInterpreter`+`DebugReport`(オンデバイス解釈) / `MetricExtractor`+`DebugMetric`（`CountMetricExtractor`/`SpanMetricExtractor`）。`DebugLogSource`/`MetricsSource` で capture 時に `debug_timeline`/`metrics` artifact へ畳む。`iOSRecorderUI` に汎用 `DebugTimelineView`（カテゴリ別ライブ表示）。ドメイン知識は core に入れず、消費者（デモ StudioFeature）が probe を実装して AI 動作・A2UI 生成イベントを emit する
+12. **M11 ✅** 自動回復：(1) URL クエリの機密キー（`?key=` 等）マスク、(2) `ReceiverHub` の listener 自己修復（世代カウンタで失敗検知→自動 re-spin）、(3) MCP `tools/call` 直前の条件付き自動回復（`listening==false` 時のみ無言で貼り直し）、(4) iPhone outbox の定期自動ドレイン（pending あり＋到達可能で数秒間隔・接続回復で自動再送）。通常運用で `restart_receiver` の手動実行は不要
 
 検証: macOS で 48 tests / 13 suites 緑、iOS 専用ターゲットは xcodebuild（generic/iOS）でコンパイル確認済み、
 MCP は実バイナリに JSON-RPC を流して動作確認済み。

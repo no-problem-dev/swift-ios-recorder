@@ -10,9 +10,18 @@ public struct BonjourExporter: Exporter {
         case hostPort(host: String, port: UInt16)
     }
 
+    /// 一度通った具体アドレス(host:port)を覚えておく箱。mDNS のハイハイや
+    /// IPv6 link-local 誤選択でコケた時の取りこぼしを減らす（テザリング耐性）。
+    actor EndpointCache {
+        private(set) var endpoint: NWEndpoint?
+        func set(_ value: NWEndpoint) { endpoint = value }
+        func invalidate() { endpoint = nil }
+    }
+
     private let target: Target
     private let codec: any RecordCodec
     private let timeout: Duration
+    private let cache = EndpointCache()
 
     public init(
         serviceType: String = "_iosrecorder._tcp",
@@ -38,8 +47,20 @@ public struct BonjourExporter: Exporter {
     public func export(_ record: Record) async throws {
         let payload = Framing.frame(try codec.encode(record))
         try await withTimeout(timeout) {
+            // 1) 直近に通った具体アドレスを最優先で試す（ブラウズ不要 → 速くて安定）。
+            if let cached = await cache.endpoint {
+                do {
+                    let resolved = try await send(payload, to: cached)
+                    await cache.set(resolved)
+                    return
+                } catch {
+                    await cache.invalidate()   // 陳腐化 → 発見し直す
+                }
+            }
+            // 2) Bonjour で発見 → 送信 → 通った具体アドレスをキャッシュ。
             let endpoint = try await resolveEndpoint()
-            try await send(payload, to: endpoint)
+            let resolved = try await send(payload, to: endpoint)
+            await cache.set(resolved)
         }
     }
 
@@ -76,16 +97,18 @@ public struct BonjourExporter: Exporter {
         }
     }
 
-    private func send(_ payload: Data, to endpoint: NWEndpoint) async throws {
+    /// 送信し、実際に到達した具体アドレス(host:port)を返す（次回キャッシュ用）。
+    private func send(_ payload: Data, to endpoint: NWEndpoint) async throws -> NWEndpoint {
         let connection = NWConnection(to: endpoint, using: .tcp)
         let queue = DispatchQueue(label: "iosrecorder.exporter")
-        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, any Error>) in
+        return try await withCheckedThrowingContinuation { (c: CheckedContinuation<NWEndpoint, any Error>) in
             let box = ResumeOnce(c)
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
+                    let resolved = connection.currentPath?.remoteEndpoint ?? endpoint
                     connection.send(content: payload, completion: .contentProcessed { error in
-                        if let error { box.resume(throwing: error) } else { box.resume(returning: ()) }
+                        if let error { box.resume(throwing: error) } else { box.resume(returning: resolved) }
                         connection.cancel()
                     })
                 case .failed(let error):

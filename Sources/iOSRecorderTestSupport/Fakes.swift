@@ -50,13 +50,35 @@ public actor FakeRecordStore: RecordStore {
 public actor FakeExporter: Exporter {
     public private(set) var exported: [Record] = []
     private let shouldThrow: Bool
+    public nonisolated let label: String
 
-    public init(shouldThrow: Bool = false) {
+    public init(shouldThrow: Bool = false, label: String = "FakeExporter") {
         self.shouldThrow = shouldThrow
+        self.label = label
     }
 
     public func export(_ record: Record) async throws {
         if shouldThrow { throw ExporterError.transportFailed("fake") }
+        exported.append(record)
+    }
+
+    public func exportedCount() -> Int { exported.count }
+}
+
+/// 実行時に成否を切り替えられる Exporter。outbox の再送検証用。
+public actor FlakyExporter: Exporter {
+    public private(set) var exported: [Record] = []
+    private var online: Bool
+    public nonisolated let label = "FlakyExporter"
+
+    public init(online: Bool = false) {
+        self.online = online
+    }
+
+    public func setOnline(_ value: Bool) { online = value }
+
+    public func export(_ record: Record) async throws {
+        guard online else { throw ExporterError.transportFailed("offline") }
         exported.append(record)
     }
 

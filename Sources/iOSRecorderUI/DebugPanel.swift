@@ -11,6 +11,8 @@ struct DebugPanel: View {
             ScrollView {
                 VStack(spacing: 20) {
                     if let reachability = controller.reachability { connectionRow(reachability) }
+                    if let metrics = controller.metrics { metricsCard(metrics) }
+                    if let debugLog = controller.debugLog { debugLogCard(debugLog) }
                     if let network = controller.network { networkCard(network) }
                     if !controller.items.isEmpty { debugItemsCard }
                     capturesSection
@@ -41,12 +43,63 @@ struct DebugPanel: View {
             Text(reachability.isReachable ? "Mac 接続中" : "Mac 未接続")
                 .font(.subheadline.weight(.medium))
             Spacer()
-            Text(reachability.isReachable ? "送信できます" : "ios-recorder serve を起動してください")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if controller.pendingCount > 0 {
+                Label("\(controller.pendingCount) 件未送", systemImage: "arrow.up.circle.dotted")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.orange)
+            } else {
+                Text(reachability.isReachable ? "送信できます" : "ios-recorder serve を起動してください")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(14)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    // MARK: - メトリクス・ダッシュボード
+
+    private func metricsCard(_ metrics: MetricsStore) -> some View {
+        NavigationLink {
+            MetricsDashboardView(store: metrics)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "chart.bar.xaxis")
+                    .font(.title3)
+                    .foregroundStyle(.orange)
+                    .frame(width: 38, height: 38)
+                    .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                Text(metrics.report?.title ?? "メトリクス").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Debug タイムライン（ライブ）
+
+    private func debugLogCard(_ debugLog: DebugLog) -> some View {
+        NavigationLink {
+            DebugTimelineView(log: debugLog)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "waveform.path.ecg")
+                    .font(.title3)
+                    .foregroundStyle(.purple)
+                    .frame(width: 38, height: 38)
+                    .background(.purple.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                Text("Debug ログ").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                Spacer()
+                Text("\(debugLog.events.count)").font(.caption.bold()).foregroundStyle(.secondary)
+                Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - ネットワーク（独立ライブモニタ）
@@ -142,7 +195,7 @@ struct DebugPanel: View {
                         NavigationLink {
                             CaptureDetailView(summary: summary, controller: controller)
                         } label: {
-                            CaptureRow(summary: summary)
+                            CaptureRow(summary: summary, delivery: controller.deliveryState(for: summary.id))
                         }
                         .buttonStyle(.plain)
                     }
@@ -155,29 +208,31 @@ struct DebugPanel: View {
 /// 記録 1 件のカード表現（純正 List 行ではなく独自カード）。
 struct CaptureRow: View {
     let summary: RecordSummary
+    var delivery: DeliveryState = .notExported
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: "photo.fill")
                 .font(.title3)
                 .foregroundStyle(.indigo)
                 .frame(width: 38, height: 38)
                 .background(.indigo.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(summary.metadata.screenName ?? "（無題）")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Text(summary.metadata.screenName ?? "（無題）")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 4)
+                    DeliveryBadge(state: delivery)
+                }
                 Text(summary.recordedAt.formatted(.relative(presentation: .named)))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            HStack(spacing: 4) {
-                ForEach(summary.artifactKinds, id: \.rawValue) { kind in
-                    KindChip(kind: kind)
+                FlowLayout(spacing: 4) {
+                    ForEach(summary.artifactKinds, id: \.rawValue) { kind in
+                        KindChip(kind: kind)
+                    }
                 }
             }
 
@@ -187,6 +242,60 @@ struct CaptureRow: View {
         }
         .padding(12)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+/// 子を行内に並べ、幅を超えたら折り返す簡易フローレイアウト（チップの表示崩れ対策）。
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, rowHeight: CGFloat = 0, totalHeight: CGFloat = 0, usedWidth: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > maxWidth, x > 0 {
+                totalHeight += rowHeight + spacing
+                usedWidth = max(usedWidth, x - spacing)
+                x = 0; rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        totalHeight += rowHeight
+        usedWidth = max(usedWidth, x - spacing)
+        return CGSize(width: min(usedWidth, maxWidth), height: totalHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX, x > bounds.minX {
+                x = bounds.minX; y += rowHeight + spacing; rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
+/// 配送状態のアイコン。delivered=緑チェック、pending=橙、未送出=非表示。
+struct DeliveryBadge: View {
+    let state: DeliveryState
+
+    var body: some View {
+        switch state {
+        case .delivered:
+            Image(systemName: "checkmark.icloud.fill")
+                .font(.caption).foregroundStyle(.green)
+        case .pending:
+            Image(systemName: "arrow.up.circle.dotted")
+                .font(.caption).foregroundStyle(.orange)
+        case .notExported:
+            EmptyView()
+        }
     }
 }
 
@@ -206,13 +315,23 @@ struct KindChip: View {
         if kind == .screenshot { return "画面" }
         if kind == .state { return "状態" }
         if kind == .log { return "ログ" }
-        return kind.rawValue
+        switch kind.rawValue {
+        case "network": return "通信"
+        case "debug_timeline": return "タイムライン"
+        case "metrics": return "メトリクス"
+        default: return kind.rawValue
+        }
     }
 
     private var color: Color {
         if kind == .screenshot { return .blue }
         if kind == .state { return .green }
         if kind == .log { return .gray }
-        return .secondary
+        switch kind.rawValue {
+        case "network": return .teal
+        case "debug_timeline": return .purple
+        case "metrics": return .orange
+        default: return .secondary
+        }
     }
 }

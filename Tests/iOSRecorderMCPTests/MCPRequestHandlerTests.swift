@@ -101,6 +101,25 @@ import iOSRecorderTestSupport
         #expect(content?.contains { ($0["text"] as? String)?.contains("hello") == true } == true)
     }
 
+    @Test func getCaptureSurfacesArtifactType() async {
+        let typed = Artifact(
+            kind: ArtifactKind(rawValue: "agent_response"),
+            mediaType: "application/json",
+            data: Data("{\"intent\":\"search\"}".utf8),
+            attributes: ["type": "AgentResponse"]
+        )
+        let record = RecordFixtures.make(id: RecordID(rawValue: "rec3"), artifacts: [typed])
+        let handler = await makeHandler(seed: [record])
+        let response = await send(handler, [
+            "jsonrpc": "2.0", "id": 10, "method": "tools/call",
+            "params": ["name": "get_capture", "arguments": ["id": "rec3"]]
+        ])
+        let content = (response?["result"] as? [String: Any])?["content"] as? [[String: Any]]
+        let text = content?.compactMap { $0["text"] as? String }.first { $0.contains("agent_response") }
+        #expect(text?.contains("<AgentResponse>") == true)
+        #expect(text?.contains("\"intent\":\"search\"") == true)
+    }
+
     @Test func getCaptureMissingReturnsIsError() async {
         let handler = await makeHandler()
         let response = await send(handler, [
@@ -117,4 +136,82 @@ import iOSRecorderTestSupport
         let error = response?["error"] as? [String: Any]
         #expect(error?["code"] as? Int == -32601)
     }
+
+    @Test func connectionStatusToolHiddenWithoutProvider() async {
+        let handler = await makeHandler()
+        let response = await send(handler, ["jsonrpc": "2.0", "id": 20, "method": "tools/list"])
+        let tools = (response?["result"] as? [String: Any])?["tools"] as? [[String: Any]]
+        let names = Set(tools?.compactMap { $0["name"] as? String } ?? [])
+        #expect(names.contains("connection_status") == false)
+    }
+
+    @Test func connectionStatusToolReportsReceiverHealth() async {
+        let store = FakeRecordStore()
+        let status = FakeStatus(snapshot: ReceiverStatusSnapshot(
+            listening: true, port: 63181, serviceName: "iOSRecorder",
+            totalReceived: 7, lastReceivedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            startedAt: Date(timeIntervalSince1970: 1_699_990_000)
+        ))
+        let handler = MCPRequestHandler(store: store, status: status)
+
+        let list = await send(handler, ["jsonrpc": "2.0", "id": 21, "method": "tools/list"])
+        let names = Set((((list?["result"] as? [String: Any])?["tools"] as? [[String: Any]]) ?? []).compactMap { $0["name"] as? String })
+        #expect(names.contains("connection_status"))
+
+        let response = await send(handler, [
+            "jsonrpc": "2.0", "id": 22, "method": "tools/call",
+            "params": ["name": "connection_status", "arguments": [:]]
+        ])
+        let text = ((response?["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String
+        #expect(text?.contains("\"listening\" : true") == true)
+        #expect(text?.contains("\"totalReceived\" : 7") == true)
+        #expect(text?.contains("\"port\" : 63181") == true)
+    }
+
+    @Test func toolCallAutoRecoversWhenListenerDown() async {
+        let down = FakeStatus(snapshot: ReceiverStatusSnapshot(listening: false, startedAt: Date()))
+        let control = FakeControl(snapshot: ReceiverStatusSnapshot(listening: true, startedAt: Date()))
+        let handler = MCPRequestHandler(store: FakeRecordStore(), status: down, control: control)
+        _ = await send(handler, [
+            "jsonrpc": "2.0", "id": 24, "method": "tools/call",
+            "params": ["name": "list_captures", "arguments": [:]]
+        ])
+        #expect(await control.restartCount == 1)
+    }
+
+    @Test func toolCallDoesNotRestartWhenListenerHealthy() async {
+        let up = FakeStatus(snapshot: ReceiverStatusSnapshot(listening: true, startedAt: Date()))
+        let control = FakeControl(snapshot: ReceiverStatusSnapshot(listening: true, startedAt: Date()))
+        let handler = MCPRequestHandler(store: FakeRecordStore(), status: up, control: control)
+        _ = await send(handler, [
+            "jsonrpc": "2.0", "id": 25, "method": "tools/call",
+            "params": ["name": "list_captures", "arguments": [:]]
+        ])
+        #expect(await control.restartCount == 0)
+    }
+
+    @Test func restartReceiverToolInvokesControl() async {
+        let store = FakeRecordStore()
+        let control = FakeControl(snapshot: ReceiverStatusSnapshot(listening: true, port: 50000, startedAt: Date()))
+        let handler = MCPRequestHandler(store: store, control: control)
+        let response = await send(handler, [
+            "jsonrpc": "2.0", "id": 23, "method": "tools/call",
+            "params": ["name": "restart_receiver", "arguments": [:]]
+        ])
+        let text = ((response?["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String
+        #expect(text?.contains("restarted") == true)
+        #expect(await control.restartCount == 1)
+    }
+}
+
+private struct FakeStatus: ReceiverStatusProviding {
+    let snapshot: ReceiverStatusSnapshot
+    func status() async -> ReceiverStatusSnapshot { snapshot }
+}
+
+private actor FakeControl: ReceiverControlling {
+    let snapshot: ReceiverStatusSnapshot
+    private(set) var restartCount = 0
+    init(snapshot: ReceiverStatusSnapshot) { self.snapshot = snapshot }
+    func restart() async -> ReceiverStatusSnapshot { restartCount += 1; return snapshot }
 }

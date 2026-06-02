@@ -21,14 +21,25 @@ let package = Package(
         // 下流の消費者（Mac companion）
         .executable(name: "ios-recorder", targets: ["ios-recorder"])
     ],
+    dependencies: [
+        // 任意データの構造表示（DebugTimeline 詳細）に使う。モノレポ各所と同じ URL identity。
+        .package(url: "https://github.com/no-problem-dev/swift-structured-data.git", from: "1.3.0"),
+    ],
     targets: [
         // ── コア ──────────────────────────────────────────────
         .target(name: "iOSRecorder"),
 
         // ── 能力アダプタ ───────────────────────────────────────
-        .target(name: "iOSRecorderUI", dependencies: ["iOSRecorder", "iOSRecorderNetwork", "iOSRecorderBonjour"]),
+        .target(
+            name: "iOSRecorderUI",
+            dependencies: [
+                "iOSRecorder", "iOSRecorderNetwork", "iOSRecorderBonjour",
+                .product(name: "StructuredDataCore", package: "swift-structured-data"),
+                .product(name: "JSONParsing", package: "swift-structured-data"),
+            ]
+        ),
         .target(name: "iOSRecorderScreenshot", dependencies: ["iOSRecorder"]),
-        .target(name: "iOSRecorderNetwork"),
+        .target(name: "iOSRecorderNetwork", dependencies: ["iOSRecorder"]),
         .target(name: "iOSRecorderBonjour", dependencies: ["iOSRecorder"]),
         .target(name: "iOSRecorderStore", dependencies: ["iOSRecorder"]),
         .target(name: "iOSRecorderMCP", dependencies: ["iOSRecorder"]),
@@ -65,7 +76,7 @@ let package = Package(
         ),
         .testTarget(
             name: "iOSRecorderNetworkTests",
-            dependencies: ["iOSRecorderNetwork"]
+            dependencies: ["iOSRecorderNetwork", "iOSRecorder"]
         )
     ]
 )

@@ -6,8 +6,14 @@ import iOSRecorder
 public struct StdioMCPServer {
     private let handler: MCPRequestHandler
 
-    public init(store: any RecordStore, name: String = "ios-recorder", version: String = "0.1.0") {
-        self.handler = MCPRequestHandler(store: store, name: name, version: version)
+    public init(
+        store: any RecordStore,
+        name: String = "ios-recorder",
+        version: String = "0.1.0",
+        status: (any ReceiverStatusProviding)? = nil,
+        control: (any ReceiverControlling)? = nil
+    ) {
+        self.handler = MCPRequestHandler(store: store, name: name, version: version, status: status, control: control)
     }
 
     public func run() async {

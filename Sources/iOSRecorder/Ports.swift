@@ -30,7 +30,13 @@ public protocol RecordStore: Sendable {
 
 /// 出力ポート: 保持した記録を外へ出す能力（Bonjour / iCloud / file …）。
 public protocol Exporter: Sendable {
+    /// 観測用ラベル（どの出力経路か）。既定は型名。
+    var label: String { get }
     func export(_ record: Record) async throws
+}
+
+public extension Exporter {
+    var label: String { String(describing: type(of: self)) }
 }
 
 /// 受信ポート（下流の消費者側）: Export の対向。

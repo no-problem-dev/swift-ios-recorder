@@ -8,6 +8,10 @@ public actor Session {
     private let sources: [any Source]
     private let store: any RecordStore
     private var exporters: [any Exporter]
+    /// キャプチャごとの配送結果。握り潰さず観測できるようにする固定長ログ。
+    private var outcomes: [RecordID: [ExportOutcome]] = [:]
+    private var outcomeOrder: [RecordID] = []
+    private let outcomeCapacity = 200
 
     public init(
         id: SessionID = .generate(),
@@ -28,10 +32,53 @@ public actor Session {
         exporters.append(exporter)
     }
 
-    /// 既存の記録を出力ポートへ再送信する（best-effort）。
-    public func reexport(_ record: Record) async {
+    /// 既存の記録を出力ポートへ再送信する。配送結果を記録する。
+    @discardableResult
+    public func reexport(_ record: Record) async -> [ExportOutcome] {
+        await deliver(record)
+    }
+
+    /// あるキャプチャの配送結果（exporter ごと）。
+    public func outcomes(for id: RecordID) -> [ExportOutcome] {
+        outcomes[id] ?? []
+    }
+
+    /// あるキャプチャの配送状態を UI 向けに畳んで返す。
+    public func deliveryState(for id: RecordID) -> DeliveryState {
+        guard !exporters.isEmpty else { return .notExported }
+        let results = outcomes[id] ?? []
+        if results.isEmpty { return .pending(reason: nil) }
+        if results.allSatisfy(\.succeeded) { return .delivered }
+        let reason = results.first(where: { !$0.succeeded })?.error
+        return .pending(reason: reason)
+    }
+
+    /// 直近の配送結果（新しい順）。
+    public func recentOutcomes(limit: Int = 50) -> [ExportOutcome] {
+        outcomeOrder.reversed().flatMap { outcomes[$0] ?? [] }.prefix(limit).map { $0 }
+    }
+
+    /// 全 exporter へ送り、結果を記録して返す。
+    private func deliver(_ record: Record) async -> [ExportOutcome] {
+        var results: [ExportOutcome] = []
         for exporter in exporters {
-            try? await exporter.export(record)
+            do {
+                try await exporter.export(record)
+                results.append(ExportOutcome(recordID: record.id, exporter: exporter.label, succeeded: true, at: Date()))
+            } catch {
+                results.append(ExportOutcome(recordID: record.id, exporter: exporter.label, succeeded: false, error: "\(error)", at: Date()))
+            }
+        }
+        track(outcomes: results, for: record.id)
+        return results
+    }
+
+    private func track(outcomes results: [ExportOutcome], for id: RecordID) {
+        if outcomes[id] == nil { outcomeOrder.append(id) }
+        outcomes[id] = results
+        while outcomeOrder.count > outcomeCapacity {
+            let evicted = outcomeOrder.removeFirst()
+            outcomes[evicted] = nil
         }
     }
 
@@ -68,10 +115,8 @@ public actor Session {
         )
 
         try await store.save(record)
-        // 出力は best-effort。失敗しても保持は守る。
-        for exporter in exporters {
-            try? await exporter.export(record)
-        }
+        // 出力は best-effort。失敗しても保持は守るが、結果は握り潰さず記録する。
+        _ = await deliver(record)
         return record.id
     }
 }

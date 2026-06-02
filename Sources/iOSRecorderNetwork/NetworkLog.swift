@@ -1,7 +1,7 @@
 import Foundation
 
 /// 1 件の HTTP 通信ログ。メモリ上のライブバッファに積まれる。
-public struct NetworkLog: Identifiable, Sendable {
+public struct NetworkLog: Identifiable, Sendable, Codable, Equatable {
     public let id: UUID
     public let method: String
     public let url: String
@@ -52,5 +52,24 @@ public struct NetworkLog: Identifiable, Sendable {
     /// URL のパス部分（一覧表示用）。
     public var path: String {
         URLComponents(string: url)?.path ?? url
+    }
+
+    /// 機密ヘッダをマスクし、ボディを truncate した安全な複製。
+    /// Record/Bonjour/MCP へ外に出す前に必ず通す。
+    public func redacted(bodyLimit: Int = 4096) -> NetworkLog {
+        NetworkLog(
+            id: id,
+            method: method,
+            url: NetworkLogSanitizer.maskURL(url),
+            host: host,
+            requestHeaders: NetworkLogSanitizer.maskHeaders(requestHeaders),
+            requestBody: requestBody.map { NetworkLogSanitizer.truncate($0, limit: bodyLimit) },
+            statusCode: statusCode,
+            responseHeaders: NetworkLogSanitizer.maskHeaders(responseHeaders),
+            responseBody: responseBody.map { NetworkLogSanitizer.truncate($0, limit: bodyLimit) },
+            errorMessage: errorMessage,
+            startedAt: startedAt,
+            duration: duration
+        )
     }
 }

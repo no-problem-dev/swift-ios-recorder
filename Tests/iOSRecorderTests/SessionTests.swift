@@ -67,4 +67,31 @@ import iOSRecorderTestSupport
         let count = await exporter.exportedCount()
         #expect(count == 1)
     }
+
+    @Test func recordsDeliveredStateOnSuccess() async throws {
+        let session = Session(sources: [FakeSource()], store: RingBufferStore(), exporters: [FakeExporter(label: "bonjour")])
+        let id = try await session.capture()
+        #expect(await session.deliveryState(for: id) == .delivered)
+        let outcomes = await session.outcomes(for: id)
+        #expect(outcomes.count == 1)
+        #expect(outcomes.first?.exporter == "bonjour")
+        #expect(outcomes.first?.succeeded == true)
+    }
+
+    @Test func recordsPendingStateWithReasonOnFailure() async throws {
+        let session = Session(sources: [FakeSource()], store: RingBufferStore(), exporters: [FakeExporter(shouldThrow: true)])
+        let id = try await session.capture()
+        let state = await session.deliveryState(for: id)
+        if case .pending(let reason) = state {
+            #expect(reason != nil)
+        } else {
+            Issue.record("expected pending, got \(state)")
+        }
+    }
+
+    @Test func notExportedWhenNoExporters() async throws {
+        let session = Session(sources: [FakeSource()], store: RingBufferStore())
+        let id = try await session.capture()
+        #expect(await session.deliveryState(for: id) == .notExported)
+    }
 }

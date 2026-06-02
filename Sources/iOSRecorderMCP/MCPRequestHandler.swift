@@ -7,11 +7,21 @@ public actor MCPRequestHandler {
     private let server: RecordMCPServer
     private let serverName: String
     private let serverVersion: String
+    private let status: (any ReceiverStatusProviding)?
+    private let control: (any ReceiverControlling)?
 
-    public init(store: any RecordStore, name: String = "ios-recorder", version: String = "0.1.0") {
+    public init(
+        store: any RecordStore,
+        name: String = "ios-recorder",
+        version: String = "0.1.0",
+        status: (any ReceiverStatusProviding)? = nil,
+        control: (any ReceiverControlling)? = nil
+    ) {
         self.server = RecordMCPServer(store: store)
         self.serverName = name
         self.serverVersion = version
+        self.status = status
+        self.control = control
     }
 
     /// JSON-RPC リクエスト 1 件を処理。通知（応答不要）なら nil。
@@ -28,6 +38,7 @@ public actor MCPRequestHandler {
         case "tools/list":
             return response(id: id, result: toolsListResult())
         case "tools/call":
+            await autoRecoverIfNeeded()
             return await toolsCall(id: id, params: object["params"] as? [String: Any] ?? [:])
         default:
             if method.hasPrefix("notifications/") { return nil }
@@ -46,8 +57,26 @@ public actor MCPRequestHandler {
     }
 
     private func toolsListResult() -> [String: Any] {
+        var tools: [[String: Any]] = baseTools()
+        if status != nil {
+            tools.append([
+                "name": "connection_status",
+                "description": "Mac 受信機の健全性を返す（listening/port/累計受信数/最終受信時刻/稼働時間）。iPhone で撮影 → これを叩いて『たった今受信・件数+1』を確認できる。",
+                "inputSchema": ["type": "object", "properties": [String: Any]()]
+            ])
+        }
+        if control != nil {
+            tools.append([
+                "name": "restart_receiver",
+                "description": "受信機の listener を貼り直し、Bonjour を再広告する。届かない時の再接続用。",
+                "inputSchema": ["type": "object", "properties": [String: Any]()]
+            ])
+        }
+        return ["tools": tools]
+    }
+
+    private func baseTools() -> [[String: Any]] {
         [
-            "tools": [
                 [
                     "name": "list_captures",
                     "description": "デバイスから届いた記録の一覧（画像は含まない）。screenName/text/kinds/limit で絞り込み。",
@@ -65,7 +94,7 @@ public actor MCPRequestHandler {
                 ],
                 [
                     "name": "get_capture",
-                    "description": "指定 id の記録を取得（画像 + state + ログ）。画像は maxDimension(既定 1024)px に縮小して返す。",
+                    "description": "指定 id の記録を取得（画像 + state + ログ + network）。非画像は [kind <型名>] 付きテキスト、画像は maxDimension(既定 1024)px に縮小して返す。",
                     "inputSchema": [
                         "type": "object",
                         "properties": [
@@ -90,7 +119,15 @@ public actor MCPRequestHandler {
                     "inputSchema": ["type": "object", "properties": [String: Any]()]
                 ]
             ]
-        ]
+    }
+
+    /// ツール実行直前のセーフティネット: listener が落ちている時だけ無言で貼り直す。
+    /// 健全な時は何もしない（port チャーンで in-flight を壊さないため無条件にはしない）。
+    private func autoRecoverIfNeeded() async {
+        guard let status, let control else { return }
+        if await status.status().listening == false {
+            _ = await control.restart()
+        }
     }
 
     private func toolsCall(id: Any?, params: [String: Any]) async -> Data? {
@@ -126,9 +163,36 @@ public actor MCPRequestHandler {
         case "clear_captures":
             try? await server.clearCaptures()
             return response(id: id, result: ["content": [["type": "text", "text": "cleared all captures"]]])
+        case "connection_status":
+            guard let status else { return response(id: id, error: (-32602, "connection_status unavailable")) }
+            let snapshot = await status.status()
+            return response(id: id, result: ["content": [["type": "text", "text": Self.statusJSON(snapshot)]]])
+        case "restart_receiver":
+            guard let control else { return response(id: id, error: (-32602, "restart_receiver unavailable")) }
+            let snapshot = await control.restart()
+            return response(id: id, result: ["content": [["type": "text", "text": "restarted\n" + Self.statusJSON(snapshot)]]])
         default:
             return response(id: id, error: (-32602, "unknown tool: \(name)"))
         }
+    }
+
+    private static func statusJSON(_ s: ReceiverStatusSnapshot) -> String {
+        var dict: [String: Any] = [
+            "listening": s.listening,
+            "totalReceived": s.totalReceived,
+            "startedAt": iso(s.startedAt),
+            "uptimeSeconds": Int(Date().timeIntervalSince(s.startedAt))
+        ]
+        dict["port"] = s.port.map { Int($0) } ?? NSNull()
+        dict["serviceName"] = orNull(s.serviceName)
+        if let last = s.lastReceivedAt {
+            dict["lastReceivedAt"] = iso(last)
+            dict["secondsSinceLastReceive"] = Int(Date().timeIntervalSince(last))
+        } else {
+            dict["lastReceivedAt"] = NSNull()
+        }
+        let data = (try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
     }
 
     // MARK: - JSON-RPC envelope
@@ -198,9 +262,15 @@ public actor MCPRequestHandler {
                     "mimeType": mimeType
                 ])
             } else {
+                let typeLabel = artifact.attributes["type"].map { " <\($0)>" } ?? ""
+                let isText = artifact.mediaType.hasPrefix("text/")
+                    || artifact.mediaType == "application/json"
+                let body = isText
+                    ? String(decoding: artifact.data, as: UTF8.self)
+                    : "base64(\(artifact.mediaType)): " + artifact.data.base64EncodedString()
                 content.append([
                     "type": "text",
-                    "text": "[\(artifact.kind.rawValue)] " + String(decoding: artifact.data, as: UTF8.self)
+                    "text": "[\(artifact.kind.rawValue)\(typeLabel)] " + body
                 ])
             }
         }
