@@ -89,15 +89,12 @@ private struct EventRow: View {
     }
 }
 
+/// カテゴリ名から安定した色を導出する。ドメイン（agent / a2ui 等）をパッケージは知らないので、
+/// 文字列を決定的にハッシュしてパレットに割り当てる（同じカテゴリは毎回同じ色）。
 func categoryColor(_ category: String) -> Color {
-    switch category {
-    case "agent": return .purple
-    case "subagent": return .pink
-    case "a2ui": return .blue
-    case "network": return .teal
-    case "metric": return .orange
-    default: return .secondary
-    }
+    var hash: UInt64 = 5381
+    for byte in category.utf8 { hash = (hash &* 33) &+ UInt64(byte) }
+    return metricColor(Int(hash % 10))
 }
 
 /// デバッグイベント 1 件の詳細。全フィールド + attributes + payload を表示。
