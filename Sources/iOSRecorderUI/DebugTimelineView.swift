@@ -92,6 +92,7 @@ private struct EventRow: View {
 func categoryColor(_ category: String) -> Color {
     switch category {
     case "agent": return .purple
+    case "subagent": return .pink
     case "a2ui": return .blue
     case "network": return .teal
     case "metric": return .orange
