@@ -1,0 +1,34 @@
+import SwiftUI
+import iOSRecorder
+
+public extension View {
+    /// 計器 UI（フロートボタン + デバッグパネル + シェイク）を載せる。DEBUG 限定で呼ぶ。
+    /// 📷 タップで撮影、🐞 タップでデバッグパネル、シェイクでも撮影。
+    func recorder(_ controller: RecorderController) -> some View {
+        modifier(RecorderModifier(controller: controller))
+    }
+}
+
+struct RecorderModifier: ViewModifier {
+    @Bindable var controller: RecorderController
+
+    func body(content: Content) -> some View {
+        placement(content)
+            .onShake { Task { @MainActor in await controller.capture() } }
+    }
+
+    @ViewBuilder
+    private func placement(_ content: Content) -> some View {
+        #if canImport(UIKit)
+        // ボタンは別ウィンドウに載せる（スクショに写り込まない & 本体タッチを妨げない）
+        // controller を環境に流して .recorderScreen(_:) から参照できるようにする
+        content
+            .environment(controller)
+            .background(OverlayInstaller(controller: controller))
+        #else
+        content
+            .environment(controller)
+            .overlay { FloatingButtons(controller: controller) }
+        #endif
+    }
+}
