@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import SwiftUI
 import UIKit
+import DesignSystem
 import iOSRecorder
 
 /// ボタンの矩形だけタッチを拾い、それ以外はアプリ本体へ通すウィンドウ。
@@ -43,13 +44,14 @@ struct OverlayInstaller: UIViewRepresentable {
     final class Coordinator {
         private var window: PassthroughWindow?
 
+        @MainActor
         func install(in scene: UIWindowScene, controller: RecorderController) {
             guard window == nil else { return }
             let region = HitRegionBox()
             let window = PassthroughWindow(windowScene: scene, hitRegion: region)
             window.windowLevel = .alert + 1
             window.accessibilityIdentifier = RecorderWindowMarker.overlayIdentifier
-            let host = UIHostingController(rootView: FloatingButtons(controller: controller, hitRegion: region))
+            let host = UIHostingController(rootView: FloatingButtons(controller: controller, hitRegion: region).theme(controller.theme))
             host.view.backgroundColor = .clear
             window.rootViewController = host
             window.isHidden = false   // 表示するが makeKey しない → アプリ本体が key window のまま
@@ -59,7 +61,7 @@ struct OverlayInstaller: UIViewRepresentable {
 }
 
 private final class InstallerView: UIView {
-    var onAttach: ((UIWindowScene) -> Void)?
+    var onAttach: (@MainActor (UIWindowScene) -> Void)?
 
     override func didMoveToWindow() {
         super.didMoveToWindow()

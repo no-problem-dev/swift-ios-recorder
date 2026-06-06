@@ -1,21 +1,26 @@
 import SwiftUI
+import DesignSystem
 import iOSRecorder
 
 /// デバッグイベントのライブ・タイムライン。`DebugLog`(@Observable) を購読し、
 /// 生成中もリアルタイムに流れる。カテゴリ（AI / UI / 通信 …）で絞り込める。
 struct DebugTimelineView: View {
     let log: DebugLog
+    /// 指定するとそのカテゴリに固定し、フィルタバーを出さない（セクションで関心を分離する用途）。
+    var lockedCategory: String? = nil
     @State private var selectedCategory: String?
+    @Environment(\.colorPalette) private var palette
 
     private var shown: [DebugEvent] {
-        let events = selectedCategory.map { log.events(in: $0) } ?? log.events
+        let category = lockedCategory ?? selectedCategory
+        let events = category.map { log.events(in: $0) } ?? log.events
         return events.reversed()   // 新しい順
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                categoryFilter
+                if lockedCategory == nil { categoryFilter }
                 if shown.isEmpty {
                     ContentUnavailableView("まだイベントがありません", systemImage: "waveform.path.ecg")
                         .frame(maxWidth: .infinity).padding(.vertical, 24)
@@ -30,8 +35,10 @@ struct DebugTimelineView: View {
                     }
                 }
             }
-            .padding()
+            .padding(16)
         }
+        .scrollContentBackground(.hidden)
+        .background(palette.background)
         .navigationTitle("Debug ログ")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -54,13 +61,15 @@ private struct FilterChip: View {
     let title: String
     let active: Bool
     let action: () -> Void
+    @Environment(\.colorPalette) private var palette
+
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.caption.weight(.medium))
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(active ? Color.accentColor.opacity(0.2) : Color(.tertiarySystemFill), in: Capsule())
-                .foregroundStyle(active ? Color.accentColor : .secondary)
+                .typography(.labelMedium)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(active ? palette.primaryContainer : palette.surfaceVariant, in: Capsule())
+                .foregroundStyle(active ? palette.onPrimaryContainer : palette.onSurfaceVariant)
         }
         .buttonStyle(.plain)
     }
@@ -68,24 +77,29 @@ private struct FilterChip: View {
 
 private struct EventRow: View {
     let event: DebugEvent
+    @Environment(\.colorPalette) private var palette
+
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text(event.category)
-                .font(.caption2.weight(.bold))
-                .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(categoryColor(event.category).opacity(0.18), in: Capsule())
-                .foregroundStyle(categoryColor(event.category))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(event.summary).font(.footnote).foregroundStyle(.primary)
-                    .lineLimit(2)
-                Text("\(event.name) · \(event.at.formatted(date: .omitted, time: .standard))")
-                    .font(.caption2).foregroundStyle(.tertiary)
+        Card(elevation: .level1, padding: EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12)) {
+            HStack(alignment: .top, spacing: 10) {
+                Text(event.category)
+                    .typography(.labelSmall)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(categoryColor(event.category).opacity(0.18), in: Capsule())
+                    .foregroundStyle(categoryColor(event.category))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(event.summary).typography(.bodySmall).foregroundStyle(palette.onSurface)
+                        .lineLimit(2)
+                    Text("\(event.name) · \(event.at.formatted(date: .omitted, time: .standard))")
+                        .typography(.labelSmall).foregroundStyle(palette.outline)
+                }
+                Spacer(minLength: 4)
+                if event.payload != nil {
+                    Image(systemName: "doc.text.magnifyingglass").font(.caption2).foregroundStyle(palette.primary)
+                }
+                Image(systemName: "chevron.right").font(.caption2.bold()).foregroundStyle(palette.outline)
             }
-            Spacer(minLength: 4)
-            Image(systemName: "chevron.right").font(.caption2.bold()).foregroundStyle(.tertiary)
         }
-        .padding(10)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -100,41 +114,80 @@ func categoryColor(_ category: String) -> Color {
 /// デバッグイベント 1 件の詳細。全フィールド + attributes + payload を表示。
 struct DebugEventDetailView: View {
     let event: DebugEvent
+    @Environment(\.colorPalette) private var palette
 
     var body: some View {
-        List {
-            Section {
-                LabeledContent("カテゴリ", value: event.category)
-                LabeledContent("イベント", value: event.name)
-                LabeledContent("時刻", value: event.at.formatted(date: .abbreviated, time: .standard))
-            }
-            Section("サマリ") {
-                Text(event.summary).font(.callout).textSelection(.enabled)
-            }
-            if !event.attributes.isEmpty {
-                Section("属性") {
-                    ForEach(event.attributes.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(key).font(.caption).foregroundStyle(.secondary)
-                            Text(value).font(.footnote.monospaced()).textSelection(.enabled)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Card {
+                    VStack(alignment: .leading, spacing: 8) {
+                        DetailRow(label: "カテゴリ", value: event.category)
+                        DetailRow(label: "イベント", value: event.name)
+                        DetailRow(label: "時刻", value: event.at.formatted(date: .abbreviated, time: .standard))
+                    }
+                }
+
+                labeled("サマリ") {
+                    Text(event.summary).typography(.bodyMedium).foregroundStyle(palette.onSurface).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if !event.attributes.isEmpty {
+                    labeled("属性") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(event.attributes.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(key).typography(.labelSmall).foregroundStyle(palette.onSurfaceVariant)
+                                    Text(value).font(.footnote.monospaced()).foregroundStyle(palette.onSurface).textSelection(.enabled)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+                }
+
+                if let payload = event.payload, !payload.isEmpty {
+                    labeled(event.attributes["payloadType"].map { "データ（\($0)）" } ?? "データ") {
+                        if let structured = StructuredValueView.parse(payload) {
+                            StructuredValueView(value: structured)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Text(String(decoding: payload, as: UTF8.self))
+                                .font(.footnote.monospaced()).foregroundStyle(palette.onSurface).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                 }
             }
-            if let payload = event.payload, !payload.isEmpty {
-                Section(event.attributes["payloadType"].map { "データ（\($0)）" } ?? "データ") {
-                    if let structured = StructuredValueView.parse(payload) {
-                        StructuredValueView(value: structured)
-                    } else {
-                        Text(String(decoding: payload, as: UTF8.self))
-                            .font(.footnote.monospaced()).textSelection(.enabled)
-                    }
-                }
-            }
+            .padding(16)
         }
+        .scrollContentBackground(.hidden)
+        .background(palette.background)
         .navigationTitle(event.name)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+    }
+
+    @ViewBuilder
+    private func labeled(_ title: String, @ViewBuilder _ content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeader(title)
+            Card { content() }
+        }
+    }
+}
+
+private struct DetailRow: View {
+    let label: String
+    let value: String
+    @Environment(\.colorPalette) private var palette
+
+    var body: some View {
+        HStack {
+            Text(label).typography(.bodyMedium).foregroundStyle(palette.onSurfaceVariant)
+            Spacer()
+            Text(value).typography(.bodyMedium).foregroundStyle(palette.onSurface).textSelection(.enabled)
+        }
     }
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import DesignSystem
 import iOSRecorder
 
 public extension View {
@@ -28,7 +29,7 @@ struct RecorderModifier: ViewModifier {
         #else
         content
             .environment(controller)
-            .overlay { FloatingButtons(controller: controller) }
+            .overlay { FloatingButtons(controller: controller).theme(controller.theme) }
         #endif
     }
 }

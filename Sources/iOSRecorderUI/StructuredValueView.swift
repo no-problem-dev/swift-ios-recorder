@@ -1,4 +1,5 @@
 import SwiftUI
+import DesignSystem
 import StructuredDataCore
 import JSONParsing
 
@@ -38,6 +39,7 @@ private struct StructuredNodeRow: View {
     let key: String
     let value: StructuredValue
     @State private var expanded = true
+    @Environment(\.colorPalette) private var palette
 
     var body: some View {
         switch value {
@@ -60,22 +62,23 @@ private struct StructuredNodeRow: View {
 
     private func keyLabel(badge: String) -> some View {
         HStack(spacing: 6) {
-            Text(key).font(.footnote.monospaced().weight(.semibold)).foregroundStyle(.primary)
-            Text(badge).font(.caption2.monospaced()).foregroundStyle(.secondary)
+            Text(key).font(.footnote.monospaced().weight(.semibold)).foregroundStyle(palette.onSurface)
+            Text(badge).font(.caption2.monospaced()).foregroundStyle(palette.onSurfaceVariant)
         }
     }
 }
 
-/// 葉（string/number/bool/null）の 1 行表示。型ごとに色分け。
+/// 葉（string/number/bool/null）の 1 行表示。型ごとに色分け（JSON シンタックスハイライト）。
 private struct StructuredLeaf: View {
     let key: String?
     let value: StructuredValue
+    @Environment(\.colorPalette) private var palette
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
             if let key {
-                Text(key).font(.footnote.monospaced().weight(.semibold)).foregroundStyle(.secondary)
-                Text(":").foregroundStyle(.tertiary)
+                Text(key).font(.footnote.monospaced().weight(.semibold)).foregroundStyle(palette.onSurfaceVariant)
+                Text(":").foregroundStyle(palette.outline)
             }
             Text(text).font(.footnote.monospaced()).foregroundStyle(color)
                 .textSelection(.enabled)
@@ -98,8 +101,8 @@ private struct StructuredLeaf: View {
         case .string: return .green
         case .number: return .blue
         case .bool: return .purple
-        case .null: return .secondary
-        default: return .primary
+        case .null: return palette.outline
+        default: return palette.onSurface
         }
     }
 }

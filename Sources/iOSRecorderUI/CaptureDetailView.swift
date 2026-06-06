@@ -1,4 +1,5 @@
 import SwiftUI
+import DesignSystem
 import iOSRecorder
 #if canImport(UIKit)
 import UIKit
@@ -11,10 +12,11 @@ struct CaptureDetailView: View {
     let controller: RecorderController
     @State private var record: Record?
     @State private var didReexport = false
+    @Environment(\.colorPalette) private var palette
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 14) {
                 if let record {
                     if let shot = record.artifacts.first(where: { $0.kind == .screenshot }),
                        let image = Self.image(from: shot.data) {
@@ -22,20 +24,19 @@ struct CaptureDetailView: View {
                             .resizable()
                             .scaledToFit()
                             .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 12).stroke(palette.outlineVariant, lineWidth: 1)
+                            }
                     }
 
                     ForEach(Array(record.artifacts.enumerated()), id: \.offset) { _, artifact in
                         if artifact.kind != .screenshot {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(artifact.kind.rawValue)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(String(decoding: artifact.data, as: UTF8.self))
-                                    .font(.system(.footnote, design: .monospaced))
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(8)
-                                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                            VStack(alignment: .leading, spacing: 6) {
+                                SectionHeader(artifactLabel(artifact.kind))
+                                Card {
+                                    artifactBody(artifact)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
                             }
                         }
                     }
@@ -47,17 +48,44 @@ struct CaptureDetailView: View {
                         }
                     } label: {
                         Label(didReexport ? "再送信しました" : "Mac に再送信", systemImage: "paperplane")
+                            .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.primary)
                     .disabled(didReexport)
                 } else {
-                    ProgressView().frame(maxWidth: .infinity)
+                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 40)
                 }
             }
-            .padding()
+            .padding(16)
         }
+        .scrollContentBackground(.hidden)
+        .background(palette.background)
         .navigationTitle(summary.metadata.screenName ?? "Capture")
         .task { record = await controller.record(for: summary.id) }
+    }
+
+    @ViewBuilder
+    private func artifactBody(_ artifact: Artifact) -> some View {
+        if artifact.mediaType == "application/json",
+           let structured = StructuredValueView.parse(artifact.data) {
+            StructuredValueView(value: structured)
+        } else {
+            Text(String(decoding: artifact.data, as: UTF8.self))
+                .font(.system(.footnote, design: .monospaced))
+                .foregroundStyle(palette.onSurface)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func artifactLabel(_ kind: ArtifactKind) -> String {
+        switch kind.rawValue {
+        case "network": return "通信"
+        case "debug_timeline": return "タイムライン"
+        case "metrics": return "メトリクス"
+        case "state": return "状態"
+        case "log": return "ログ"
+        default: return kind.rawValue
+        }
     }
 
     static func image(from data: Data) -> Image? {

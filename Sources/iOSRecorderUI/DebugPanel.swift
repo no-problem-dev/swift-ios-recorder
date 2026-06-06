@@ -1,24 +1,29 @@
 import SwiftUI
+import DesignSystem
 import iOSRecorder
 import iOSRecorderNetwork
 import iOSRecorderBonjour
 
 struct DebugPanel: View {
     @Bindable var controller: RecorderController
+    @Environment(\.colorPalette) private var palette
+
+    private var console: DebugConsole {
+        controller.console ?? .default(for: controller)
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 20) {
-                    if let reachability = controller.reachability { connectionRow(reachability) }
-                    if let metrics = controller.metrics { metricsCard(metrics) }
-                    if let debugLog = controller.debugLog { debugLogCard(debugLog) }
-                    if let network = controller.network { networkCard(network) }
-                    if !controller.items.isEmpty { debugItemsCard }
-                    capturesSection
+                VStack(spacing: 16) {
+                    ForEach(console.sections) { section in
+                        DebugSectionView(section: section, controller: controller)
+                    }
                 }
-                .padding()
+                .padding(16)
             }
+            .scrollContentBackground(.hidden)
+            .background(palette.background)
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Recorder")
             #if os(iOS)
@@ -31,111 +36,350 @@ struct DebugPanel: View {
             }
             .task { await controller.refresh() }
         }
+        .tint(palette.primary)
     }
+}
 
-    // MARK: - Mac 接続状態
+/// 1 セクションを content に応じて描画する。順序・配置は console（利用側）が決める。
+private struct DebugSectionView: View {
+    let section: DebugSection
+    @Bindable var controller: RecorderController
 
-    private func connectionRow(_ reachability: ExportReachability) -> some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(reachability.isReachable ? .green : .secondary)
-                .frame(width: 9, height: 9)
-            Text(reachability.isReachable ? "Mac 接続中" : "Mac 未接続")
-                .font(.subheadline.weight(.medium))
-            Spacer()
-            if controller.pendingCount > 0 {
-                Label("\(controller.pendingCount) 件未送", systemImage: "arrow.up.circle.dotted")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.orange)
-            } else {
-                Text(reachability.isReachable ? "送信できます" : "ios-recorder serve を起動してください")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    var body: some View {
+        switch section.content {
+        case .connection:
+            if let reachability = controller.reachability {
+                ConnectionRow(controller: controller, reachability: reachability)
+            }
+        case let .metrics(store):
+            SectionSummaryCard(icon: section.icon ?? "chart.bar.xaxis", tint: .orange, title: store.report?.title ?? (section.title ?? "メトリクス"), preview: section.preview) {
+                MetricsDashboardView(store: store)
+            }
+        case let .timeline(log, category):
+            SectionSummaryCard(icon: section.icon ?? "waveform.path.ecg", tint: .purple, title: section.title ?? "Debug ログ", badge: log.events(matching: category).count, preview: section.preview) {
+                DebugTimelineView(log: log, lockedCategory: category)
+                    .navigationTitle(section.title ?? "Debug ログ")
+            }
+        case let .network(store):
+            SectionSummaryCard(icon: section.icon ?? "network", tint: .teal, title: section.title ?? "Network", badge: store.logs.count, preview: section.preview) {
+                NetworkListView(store: store)
+            }
+        case .captures:
+            CapturesSection(controller: controller, title: section.title ?? "記録")
+        case let .items(items):
+            ItemsCard(items: items)
+        case let .statGrid(columns, stats):
+            StatGridCard(title: section.title, columns: columns, stats: stats)
+        case let .custom(view):
+            CustomCard(title: section.title, view: view)
+        }
+    }
+}
+
+// MARK: - Mac 接続状態
+
+private struct ConnectionRow: View {
+    @Bindable var controller: RecorderController
+    let reachability: ExportReachability
+    @Environment(\.colorPalette) private var palette
+
+    var body: some View {
+        Card {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(reachability.isReachable ? palette.success : palette.outline)
+                    .frame(width: 9, height: 9)
+                Text(reachability.isReachable ? "Mac 接続中" : "Mac 未接続")
+                    .typography(.titleSmall)
+                    .foregroundStyle(palette.onSurface)
+                Spacer()
+                if controller.pendingCount > 0 {
+                    Label("\(controller.pendingCount) 件未送", systemImage: "arrow.up.circle.dotted")
+                        .typography(.labelMedium)
+                        .foregroundStyle(palette.warning)
+                } else {
+                    Text(reachability.isReachable ? "送信できます" : "ios-recorder serve を起動してください")
+                        .typography(.labelMedium)
+                        .foregroundStyle(palette.onSurfaceVariant)
+                }
             }
         }
-        .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+// MARK: - サマリカード（メトリクス / タイムライン / ネットワーク共通の動線）
+// 見出し（アイコン＋タイトル＋件数＋状態ピル）に加え、タップ前の覗き見プレビューを描く。
+
+private struct SectionSummaryCard<Destination: View>: View {
+    @Environment(\.colorPalette) private var palette
+    let icon: String
+    let tint: Color
+    let title: String
+    var badge: Int? = nil
+    var preview: [DebugPreviewElement] = []
+    @ViewBuilder let destination: () -> Destination
+
+    private var status: PreviewStatus? {
+        for case let .status(make) in preview { return make() }
+        return nil
     }
 
-    // MARK: - メトリクス・ダッシュボード
+    private var bodyElements: [DebugPreviewElement] {
+        preview.filter { if case .status = $0 { return false } else { return true } }
+    }
 
-    private func metricsCard(_ metrics: MetricsStore) -> some View {
+    private var isEmpty: Bool {
+        if let badge { return badge == 0 }
+        if case .neutral = status { return true }
+        return false
+    }
+
+    private var accent: Color {
+        switch status {
+        case .warning: return palette.warning
+        case .error: return palette.error
+        default: return tint
+        }
+    }
+
+    var body: some View {
         NavigationLink {
-            MetricsDashboardView(store: metrics)
+            destination()
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "chart.bar.xaxis")
-                    .font(.title3)
-                    .foregroundStyle(.orange)
-                    .frame(width: 38, height: 38)
-                    .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-                Text(metrics.report?.title ?? "メトリクス").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                Spacer()
-                Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
+            Card {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        IconBadge(systemName: icon, foregroundColor: accent, backgroundColor: accent.opacity(0.14))
+                        Text(title).typography(.titleSmall).foregroundStyle(palette.onSurface)
+                        Spacer()
+                        if let badge {
+                            Text("\(badge)").typography(.labelMedium).monospacedDigit().foregroundStyle(palette.onSurfaceVariant)
+                        }
+                        if let status { StatusPill(status: status) }
+                        Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(palette.outline)
+                    }
+                    if !bodyElements.isEmpty {
+                        SectionPreviewView(elements: bodyElements)
+                    }
+                }
             }
-            .padding(16)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+            .opacity(isEmpty ? 0.55 : 1)
         }
         .buttonStyle(.plain)
     }
+}
 
-    // MARK: - Debug タイムライン（ライブ）
+/// 状態ピル。ok は控えめ、warning/error は色付きで件数を出す。
+private struct StatusPill: View {
+    let status: PreviewStatus
+    @Environment(\.colorPalette) private var palette
 
-    private func debugLogCard(_ debugLog: DebugLog) -> some View {
-        NavigationLink {
-            DebugTimelineView(log: debugLog)
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "waveform.path.ecg")
-                    .font(.title3)
-                    .foregroundStyle(.purple)
-                    .frame(width: 38, height: 38)
-                    .background(.purple.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-                Text("Debug ログ").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                Spacer()
-                Text("\(debugLog.events.count)").font(.caption.bold()).foregroundStyle(.secondary)
-                Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
-            }
-            .padding(16)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+    var body: some View {
+        switch status {
+        case .ok:
+            Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(palette.success)
+        case let .warning(count):
+            pill("\(count)", systemImage: "exclamationmark.triangle.fill", color: palette.warning)
+        case let .error(count):
+            pill("\(count)", systemImage: "xmark.octagon.fill", color: palette.error)
+        case let .neutral(text):
+            Text(text).typography(.labelSmall).foregroundStyle(palette.onSurfaceVariant)
         }
-        .buttonStyle(.plain)
     }
 
-    // MARK: - ネットワーク（独立ライブモニタ）
-
-    private func networkCard(_ network: NetworkLogStore) -> some View {
-        NavigationLink {
-            NetworkListView(store: network)
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "network")
-                    .font(.title3)
-                    .foregroundStyle(.teal)
-                    .frame(width: 38, height: 38)
-                    .background(.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-                Text("Network").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                Spacer()
-                Text("\(network.logs.count)").font(.caption.bold()).foregroundStyle(.secondary)
-                Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
-            }
-            .padding(16)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+    private func pill(_ text: String, systemImage: String, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: systemImage).font(.caption2)
+            Text(text).typography(.labelSmall).monospacedDigit()
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 7).padding(.vertical, 3)
+        .background(color.opacity(0.16), in: Capsule())
+        .foregroundStyle(color)
+    }
+}
+
+/// プレビュー要素列を縦に描く。
+private struct SectionPreviewView: View {
+    let elements: [DebugPreviewElement]
+    @Environment(\.colorPalette) private var palette
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(elements.enumerated()), id: \.offset) { _, element in
+                render(element)
+            }
+        }
     }
 
-    // MARK: - デバッグ項目（プラグイン）
+    @ViewBuilder
+    private func render(_ element: DebugPreviewElement) -> some View {
+        switch element {
+        case let .latest(make):
+            LatestLine(text: make())
+        case let .stats(make):
+            PreviewStatsRow(stats: make())
+        case let .sparkline(make):
+            Sparkline(values: make())
+        case let .chips(make):
+            PreviewChips(labels: make())
+        case .status:
+            EmptyView()
+        }
+    }
+}
 
-    private var debugItemsCard: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(controller.items.enumerated()), id: \.element.id) { index, item in
-                if index > 0 { Divider() }
-                itemRow(item).padding(.vertical, 10)
+private struct LatestLine: View {
+    let text: String?
+    @Environment(\.colorPalette) private var palette
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text("最新").typography(.labelSmall).foregroundStyle(palette.onSurfaceVariant)
+            Text(text ?? "まだイベントなし")
+                .typography(.bodySmall)
+                .foregroundStyle(text == nil ? palette.outline : palette.onSurface)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+private struct PreviewStatsRow: View {
+    let stats: [PreviewStat]
+    @Environment(\.colorPalette) private var palette
+
+    var body: some View {
+        if stats.isEmpty {
+            Text("データなし").typography(.bodySmall).foregroundStyle(palette.outline)
+        } else {
+            HStack(alignment: .top, spacing: 20) {
+                ForEach(Array(stats.enumerated()), id: \.offset) { _, stat in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(stat.label).typography(.labelSmall).foregroundStyle(palette.onSurfaceVariant)
+                        Text(stat.value).typography(.titleSmall).monospacedDigit().foregroundStyle(palette.onSurface)
+                    }
+                }
+                Spacer(minLength: 0)
             }
         }
-        .padding(.horizontal, 16)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+private struct Sparkline: View {
+    let values: [Double]
+    @Environment(\.colorPalette) private var palette
+
+    var body: some View {
+        let maxValue = values.max() ?? 0
+        if maxValue <= 0 {
+            EmptyView()
+        } else {
+            HStack(alignment: .bottom, spacing: 2) {
+                ForEach(Array(values.enumerated()), id: \.offset) { _, value in
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(value > 0 ? palette.primary : palette.surfaceVariant)
+                        .frame(height: max(2, CGFloat(value / maxValue) * 18))
+                }
+            }
+            .frame(height: 18)
+        }
+    }
+}
+
+private struct PreviewChips: View {
+    let labels: [String]
+    @Environment(\.colorPalette) private var palette
+
+    var body: some View {
+        if labels.isEmpty {
+            EmptyView()
+        } else {
+            FlowLayout(spacing: 4) {
+                ForEach(Array(labels.enumerated()), id: \.offset) { _, label in
+                    Text(label)
+                        .typography(.labelSmall)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(palette.surfaceVariant, in: Capsule())
+                        .foregroundStyle(palette.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Stat グリッド
+
+private struct StatGridCard: View {
+    let title: String?
+    let columns: Int
+    let stats: [DebugStat]
+    @Environment(\.colorPalette) private var palette
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let title { SectionHeader(title) }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: columns), spacing: 12) {
+                ForEach(stats) { stat in
+                    StatTile(stat: stat)
+                }
+            }
+        }
+    }
+}
+
+private struct StatTile: View {
+    let stat: DebugStat
+    @Environment(\.colorPalette) private var palette
+
+    var body: some View {
+        Card(elevation: .level1) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    if let icon = stat.icon {
+                        Image(systemName: icon).font(.caption).foregroundStyle(stat.tint ?? palette.primary)
+                    }
+                    Text(stat.title).typography(.labelMedium).foregroundStyle(palette.onSurfaceVariant).lineLimit(1)
+                }
+                StatDisplay(value: stat.value(), size: .small, valueColor: stat.tint ?? palette.onSurface)
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                if let caption = stat.caption {
+                    Text(caption()).typography(.labelSmall).foregroundStyle(palette.onSurfaceVariant).lineLimit(1)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - 任意ビュー
+
+private struct CustomCard: View {
+    let title: String?
+    let view: AnyView
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let title { SectionHeader(title) }
+            Card { view }
+        }
+    }
+}
+
+// MARK: - デバッグ項目（アプリが差し込む action/toggle/info）
+
+private struct ItemsCard: View {
+    let items: [DebugItem]
+    @Environment(\.colorPalette) private var palette
+
+    var body: some View {
+        Card {
+            VStack(spacing: 0) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    if index > 0 { Divider().overlay(palette.outlineVariant) }
+                    itemRow(item).padding(.vertical, 10)
+                }
+            }
+        }
+        .tint(palette.primary)
     }
 
     @ViewBuilder
@@ -146,38 +390,44 @@ struct DebugPanel: View {
                 Task { @MainActor in await run() }
             } label: {
                 Label(item.title, systemImage: systemImage)
+                    .typography(.bodyMedium)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .foregroundStyle(palette.primary)
         case let .toggle(get, set):
             Toggle(isOn: Binding(get: { get() }, set: { set($0) })) {
-                Text(item.title)
+                Text(item.title).typography(.bodyMedium).foregroundStyle(palette.onSurface)
             }
         case let .info(value):
             HStack {
-                Text(item.title)
+                Text(item.title).typography(.bodyMedium).foregroundStyle(palette.onSurface)
                 Spacer()
-                Text(value()).foregroundStyle(.secondary)
+                Text(value()).typography(.bodyMedium).foregroundStyle(palette.onSurfaceVariant)
             }
         }
     }
+}
 
-    // MARK: - 記録一覧
+// MARK: - 記録一覧
 
-    private var capturesSection: some View {
+private struct CapturesSection: View {
+    @Bindable var controller: RecorderController
+    let title: String
+    @Environment(\.colorPalette) private var palette
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("記録")
-                    .font(.headline)
-                Text("\(controller.summaries.count)")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                SectionHeader(title)
+                Text("\(controller.summaries.count)").typography(.labelMedium).monospacedDigit().foregroundStyle(palette.onSurfaceVariant)
                 Spacer()
                 if !controller.summaries.isEmpty {
                     Button(role: .destructive) {
                         Task { @MainActor in await controller.removeAll() }
                     } label: {
-                        Label("全削除", systemImage: "trash").labelStyle(.titleAndIcon).font(.caption)
+                        Label("全削除", systemImage: "trash").labelStyle(.titleAndIcon).typography(.labelMedium)
                     }
+                    .tint(palette.error)
                 }
             }
 
@@ -205,47 +455,56 @@ struct DebugPanel: View {
     }
 }
 
-/// 記録 1 件のカード表現（純正 List 行ではなく独自カード）。
-struct CaptureRow: View {
-    let summary: RecordSummary
-    var delivery: DeliveryState = .notExported
-
+/// セクション見出し（小さな uppercase 風ラベル）。
+struct SectionHeader: View {
+    let title: String
+    @Environment(\.colorPalette) private var palette
+    init(_ title: String) { self.title = title }
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "photo.fill")
-                .font(.title3)
-                .foregroundStyle(.indigo)
-                .frame(width: 38, height: 38)
-                .background(.indigo.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Text(summary.metadata.screenName ?? "（無題）")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Spacer(minLength: 4)
-                    DeliveryBadge(state: delivery)
-                }
-                Text(summary.recordedAt.formatted(.relative(presentation: .named)))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                FlowLayout(spacing: 4) {
-                    ForEach(summary.artifactKinds, id: \.rawValue) { kind in
-                        KindChip(kind: kind)
-                    }
-                }
-            }
-
-            Image(systemName: "chevron.right")
-                .font(.caption.bold())
-                .foregroundStyle(.tertiary)
-        }
-        .padding(12)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
+        Text(title)
+            .typography(.titleSmall)
+            .foregroundStyle(palette.onSurface)
     }
 }
 
-/// 子を行内に並べ、幅を超えたら折り返す簡易フローレイアウト（チップの表示崩れ対策）。
+/// 記録 1 件のカード表現。
+struct CaptureRow: View {
+    let summary: RecordSummary
+    var delivery: DeliveryState = .notExported
+    @Environment(\.colorPalette) private var palette
+
+    var body: some View {
+        Card(elevation: .level1) {
+            HStack(alignment: .top, spacing: 12) {
+                IconBadge(systemName: "photo.fill", foregroundColor: .indigo, backgroundColor: Color.indigo.opacity(0.14))
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Text(summary.metadata.screenName ?? "（無題）")
+                            .typography(.titleSmall)
+                            .foregroundStyle(palette.onSurface)
+                        Spacer(minLength: 4)
+                        DeliveryBadge(state: delivery)
+                    }
+                    Text(summary.recordedAt.formatted(.relative(presentation: .named)))
+                        .typography(.labelMedium)
+                        .foregroundStyle(palette.onSurfaceVariant)
+                    FlowLayout(spacing: 4) {
+                        ForEach(summary.artifactKinds, id: \.rawValue) { kind in
+                            KindChip(kind: kind)
+                        }
+                    }
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.bold())
+                    .foregroundStyle(palette.outline)
+            }
+        }
+    }
+}
+
+/// 子を行内に並べ、幅を超えたら折り返す簡易フローレイアウト。
 struct FlowLayout: Layout {
     var spacing: CGFloat = 4
 
@@ -281,18 +540,17 @@ struct FlowLayout: Layout {
     }
 }
 
-/// 配送状態のアイコン。delivered=緑チェック、pending=橙、未送出=非表示。
+/// 配送状態のアイコン。
 struct DeliveryBadge: View {
     let state: DeliveryState
+    @Environment(\.colorPalette) private var palette
 
     var body: some View {
         switch state {
         case .delivered:
-            Image(systemName: "checkmark.icloud.fill")
-                .font(.caption).foregroundStyle(.green)
+            Image(systemName: "checkmark.icloud.fill").font(.caption).foregroundStyle(palette.success)
         case .pending:
-            Image(systemName: "arrow.up.circle.dotted")
-                .font(.caption).foregroundStyle(.orange)
+            Image(systemName: "arrow.up.circle.dotted").font(.caption).foregroundStyle(palette.warning)
         case .notExported:
             EmptyView()
         }
@@ -303,12 +561,10 @@ struct KindChip: View {
     let kind: ArtifactKind
 
     var body: some View {
-        Text(label)
-            .font(.caption2.weight(.medium))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(color.opacity(0.18), in: Capsule())
-            .foregroundStyle(color)
+        Chip(label)
+            .chipStyle(.filled)
+            .chipSize(.small)
+            .foregroundColor(color)
     }
 
     private var label: String {

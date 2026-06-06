@@ -1,9 +1,11 @@
 import SwiftUI
+import DesignSystem
 import iOSRecorderNetwork
 
 struct NetworkListView: View {
     @Bindable var store: NetworkLogStore
     @State private var query = ""
+    @Environment(\.colorPalette) private var palette
 
     private var filtered: [NetworkLog] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
@@ -28,8 +30,10 @@ struct NetworkListView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding()
+            .padding(16)
         }
+        .scrollContentBackground(.hidden)
+        .background(palette.background)
         .navigationTitle("Network")
         .searchable(text: $query, prompt: "URL・メソッド・ステータスで検索")
         .overlay {
@@ -47,6 +51,7 @@ struct NetworkListView: View {
                     Image(systemName: "trash")
                 }
                 .disabled(store.logs.isEmpty)
+                .tint(palette.error)
             }
         }
     }
@@ -54,25 +59,26 @@ struct NetworkListView: View {
 
 struct NetworkRow: View {
     let log: NetworkLog
+    @Environment(\.colorPalette) private var palette
 
     var body: some View {
-        HStack(spacing: 10) {
-            Circle().fill(statusColor).frame(width: 9, height: 9)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(log.method).font(.caption.bold()).foregroundStyle(.secondary)
-                    Text(log.path).font(.subheadline.weight(.medium)).lineLimit(1)
+        Card(elevation: .level1) {
+            HStack(spacing: 10) {
+                Circle().fill(statusColor).frame(width: 9, height: 9)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(log.method).typography(.labelMedium).foregroundStyle(palette.onSurfaceVariant)
+                        Text(log.path).typography(.bodyMedium).foregroundStyle(palette.onSurface).lineLimit(1)
+                    }
+                    Text(log.host).typography(.labelSmall).foregroundStyle(palette.outline).lineLimit(1)
                 }
-                Text(log.host).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 3) {
-                Text(statusText).font(.caption.bold()).foregroundStyle(statusColor)
-                Text("\(Int(log.duration * 1000))ms").font(.caption2).foregroundStyle(.tertiary)
+                Spacer()
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(statusText).typography(.labelMedium).monospacedDigit().foregroundStyle(statusColor)
+                    Text("\(Int(log.duration * 1000))ms").typography(.labelSmall).foregroundStyle(palette.outline)
+                }
             }
         }
-        .padding(12)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var statusText: String {
@@ -82,37 +88,40 @@ struct NetworkRow: View {
     }
 
     private var statusColor: Color {
-        if log.errorMessage != nil { return .gray }
-        guard let code = log.statusCode else { return .secondary }
+        if log.errorMessage != nil { return palette.outline }
+        guard let code = log.statusCode else { return palette.onSurfaceVariant }
         switch code {
-        case 200..<300: return .green
-        case 300..<400: return .orange
-        default: return .red
+        case 200..<300: return palette.success
+        case 300..<400: return palette.warning
+        default: return palette.error
         }
     }
 }
 
 struct NetworkDetailView: View {
     let log: NetworkLog
+    @Environment(\.colorPalette) private var palette
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 14) {
                 section("リクエスト") {
                     field("Method", log.method)
                     field("URL", log.url)
                     headers(log.requestHeaders)
-                    body(log.requestBody)
+                    bodyField(log.requestBody)
                 }
                 section("レスポンス") {
                     field("Status", log.statusCode.map(String.init) ?? log.errorMessage ?? "—")
                     field("Duration", "\(Int(log.duration * 1000)) ms")
                     headers(log.responseHeaders)
-                    body(log.responseBody)
+                    bodyField(log.responseBody)
                 }
             }
-            .padding()
+            .padding(16)
         }
+        .scrollContentBackground(.hidden)
+        .background(palette.background)
         .navigationTitle(log.path)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -122,18 +131,17 @@ struct NetworkDetailView: View {
     @ViewBuilder
     private func section(_ title: String, @ViewBuilder _ content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.headline)
-            content()
+            SectionHeader(title)
+            Card {
+                VStack(alignment: .leading, spacing: 10) { content() }
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
     }
 
     private func field(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
+            Text(label).typography(.labelSmall).foregroundStyle(palette.onSurfaceVariant)
+            Text(value).font(.footnote.monospaced()).foregroundStyle(palette.onSurface).textSelection(.enabled)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -147,7 +155,7 @@ struct NetworkDetailView: View {
     }
 
     @ViewBuilder
-    private func body(_ body: String?) -> some View {
+    private func bodyField(_ body: String?) -> some View {
         if let body, !body.isEmpty {
             field("Body", body)
         }

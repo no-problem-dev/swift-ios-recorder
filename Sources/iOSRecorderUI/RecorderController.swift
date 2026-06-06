@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import DesignSystem
 import iOSRecorder
 import iOSRecorderNetwork
 import iOSRecorderBonjour
@@ -21,6 +22,10 @@ public final class RecorderController {
     public let debugLog: DebugLog?
     /// 利用側が差し込むメトリクス（任意）。あればパネルにメトリクス・ダッシュボードが出る。
     public let metrics: MetricsStore?
+    /// パネルの画面構成（任意）。未指定なら存在するストアから既定構成を自動合成する。
+    public let console: DebugConsole?
+    /// 計器 UI に適用するデザインシステムのテーマ。利用側ブランドに合わせて差し替え可能。
+    public let theme: ThemeProvider
     public private(set) var summaries: [RecordSummary] = []
     /// キャプチャごとの配送状態（delivered / pending）。refresh で更新。
     public private(set) var deliveryStates: [RecordID: DeliveryState] = [:]
@@ -40,7 +45,9 @@ public final class RecorderController {
         outbox: (any OutboxDraining)? = nil,
         debugLog: DebugLog? = nil,
         metrics: MetricsStore? = nil,
-        items: [DebugItem] = []
+        items: [DebugItem] = [],
+        console: DebugConsole? = nil,
+        theme: ThemeProvider? = nil
     ) {
         self.session = session
         self.store = store
@@ -50,6 +57,8 @@ public final class RecorderController {
         self.debugLog = debugLog
         self.metrics = metrics
         self.items = items
+        self.console = console
+        self.theme = theme ?? ThemeProvider()
         if outbox != nil { startAutoDrain() }
     }
 

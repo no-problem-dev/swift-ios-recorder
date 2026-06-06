@@ -24,6 +24,8 @@ let package = Package(
     dependencies: [
         // 任意データの構造表示（DebugTimeline 詳細）に使う。モノレポ各所と同じ URL identity。
         .package(url: "https://github.com/no-problem-dev/swift-structured-data.git", from: "1.3.0"),
+        // デバッグ UI のデザイントークン/コンポーネント。UI 層（iOSRecorderUI）でのみ使う。
+        .package(url: "https://github.com/no-problem-dev/swift-design-system.git", from: "1.2.0"),
     ],
     targets: [
         // ── コア ──────────────────────────────────────────────
@@ -36,6 +38,7 @@ let package = Package(
                 "iOSRecorder", "iOSRecorderNetwork", "iOSRecorderBonjour",
                 .product(name: "StructuredDataCore", package: "swift-structured-data"),
                 .product(name: "JSONParsing", package: "swift-structured-data"),
+                .product(name: "DesignSystem", package: "swift-design-system"),
             ]
         ),
         .target(name: "iOSRecorderScreenshot", dependencies: ["iOSRecorder"]),

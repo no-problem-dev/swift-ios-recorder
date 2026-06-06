@@ -1,14 +1,15 @@
 import SwiftUI
 import Charts
+import DesignSystem
 import iOSRecorder
 
-/// 任意のメトリクス（利用側が差し込む `MetricsReport`）を、通貨切替・倍率・色分けで
-/// リッチに可視化する汎用ダッシュボード。ドメイン非依存（ロジックはパッケージ責務）。
+/// 任意のメトリクス（利用側が差し込む `MetricsReport`）を、利用側定義の表示軸・色分けで
+/// リッチに可視化する汎用ダッシュボード。ドメイン非依存（整形は `MetricSeries.format` に委譲）。
 public struct MetricsDashboardView: View {
     let store: MetricsStore
-    @State private var currencyIndex = 0
-    @State private var multiplier = 1
+    @State private var selection: [String: String] = [:]
     @State private var scopeIndex = 0
+    @Environment(\.colorPalette) private var palette
 
     public init(store: MetricsStore) { self.store = store }
 
@@ -19,13 +20,18 @@ public struct MetricsDashboardView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         controls(report)
                         ForEach(scope(report).series) { series in
-                            SeriesCard(series: series, currency: currency(report), multiplier: multiplier)
+                            SeriesCard(series: series, selection: selection)
                         }
                     }
-                    .padding()
+                    .padding(16)
                 }
+                .scrollContentBackground(.hidden)
+                .background(palette.background)
+                .onAppear { syncSelection(report) }
+                .onChange(of: report.title) { _, _ in syncSelection(report) }
             } else {
                 ContentUnavailableView("まだメトリクスがありません", systemImage: "chart.bar.xaxis")
+                    .background(palette.background)
             }
         }
         .navigationTitle(store.report?.title ?? "メトリクス")
@@ -34,9 +40,10 @@ public struct MetricsDashboardView: View {
         #endif
     }
 
-    private func currency(_ report: MetricsReport) -> CurrencyOption {
-        let options = report.currencies.isEmpty ? [.usd] : report.currencies
-        return options[min(currencyIndex, options.count - 1)]
+    private func syncSelection(_ report: MetricsReport) {
+        var merged = report.defaultSelection
+        for (key, value) in selection where merged[key] != nil { merged[key] = value }
+        selection = merged
     }
 
     private func scope(_ report: MetricsReport) -> MetricsScope {
@@ -44,127 +51,119 @@ public struct MetricsDashboardView: View {
     }
 
     @ViewBuilder private func controls(_ report: MetricsReport) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if report.currencies.count > 1 {
-                Picker("通貨", selection: $currencyIndex) {
-                    ForEach(Array(report.currencies.enumerated()), id: \.offset) { index, option in
-                        Text("\(option.symbol) \(option.code)").tag(index)
+        if !report.axes.isEmpty || report.scopes.count > 1 {
+            Card {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(report.axes) { axis in
+                        axisControl(axis)
                     }
-                }
-                .pickerStyle(.segmented)
-            }
-            HStack(spacing: 8) {
-                Text("倍率").font(.caption).foregroundStyle(.secondary)
-                ForEach(report.multipliers, id: \.self) { m in
-                    Button {
-                        multiplier = m
-                    } label: {
-                        Text("×\(m)")
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10).padding(.vertical, 5)
-                            .background(multiplier == m ? Color.accentColor : Color(.tertiarySystemFill), in: Capsule())
-                            .foregroundStyle(multiplier == m ? .white : .secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            if report.scopes.count > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(Array(report.scopes.enumerated()), id: \.offset) { index, s in
-                            Button { scopeIndex = index } label: {
-                                Text(s.label)
-                                    .font(.caption.weight(.medium))
-                                    .padding(.horizontal, 10).padding(.vertical, 5)
-                                    .background(scopeIndex == index ? Color.accentColor.opacity(0.2) : Color(.tertiarySystemFill), in: Capsule())
-                                    .foregroundStyle(scopeIndex == index ? Color.accentColor : .secondary)
+                    if report.scopes.count > 1 {
+                        axisRow(label: "スコープ") {
+                            ForEach(Array(report.scopes.enumerated()), id: \.offset) { index, s in
+                                pill(s.label, active: scopeIndex == index) { scopeIndex = index }
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
             }
         }
     }
+
+    @ViewBuilder private func axisControl(_ axis: MetricAxis) -> some View {
+        switch axis.style {
+        case .segmented:
+            Picker(axis.label, selection: binding(for: axis)) {
+                ForEach(axis.options) { option in
+                    Text(option.label).tag(option.id)
+                }
+            }
+            .pickerStyle(.segmented)
+        case .pills:
+            axisRow(label: axis.label) {
+                ForEach(axis.options) { option in
+                    pill(option.label, active: selection[axis.id] == option.id) { selection[axis.id] = option.id }
+                }
+            }
+        }
+    }
+
+    private func axisRow<Content: View>(label: String, @ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 8) {
+            Text(label).typography(.labelMedium).foregroundStyle(palette.onSurfaceVariant)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) { content() }
+            }
+        }
+    }
+
+    private func binding(for axis: MetricAxis) -> Binding<String> {
+        Binding(
+            get: { selection[axis.id] ?? axis.options.first?.id ?? "" },
+            set: { selection[axis.id] = $0 }
+        )
+    }
+
+    private func pill(_ text: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(text)
+                .typography(.labelMedium)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(active ? palette.primaryContainer : palette.surfaceVariant, in: Capsule())
+                .foregroundStyle(active ? palette.onPrimaryContainer : palette.onSurfaceVariant)
+        }
+        .buttonStyle(.plain)
+    }
 }
 
-/// パレット（color index → 色）。
+/// パレット（color index → 色）。データ可視化用の固定ハイカラー（テーマ非依存で識別性優先）。
 func metricColor(_ index: Int) -> Color {
     let palette: [Color] = [.blue, .green, .orange, .purple, .pink, .teal, .red, .indigo, .mint, .cyan]
     return palette[((index % palette.count) + palette.count) % palette.count]
 }
 
-/// メトリクス値の表示整形（単位・通貨・倍率を反映）。
-func formatMetric(_ value: Double, unit: MetricUnit, currency: CurrencyOption, multiplier: Int) -> String {
-    let m = Double(multiplier)
-    switch unit {
-    case .currencyUSD:
-        return currency.symbol + adaptiveNumber(value * currency.rateFromUSD * m)
-    case .tokens, .count:
-        return (value * m).formatted(.number.precision(.fractionLength(0)))
-    case .seconds:
-        return adaptiveNumber(value * m) + "s"
-    case .custom(let suffix):
-        return adaptiveNumber(value * m) + suffix
-    }
-}
-
-/// 適応的な数値表示:
-/// - |値| < 1（小数）→ 有効数字 2 桁（0.42 / 0.0012 / 0.050）
-/// - |値| ≥ 1 → 整数部はそのまま、小数は最大 2 桁（3.56 / 160 / 80,000 / 1,234.57）
-func adaptiveNumber(_ value: Double) -> String {
-    let magnitude = abs(value)
-    if magnitude == 0 { return "0" }
-    if magnitude >= 1 {
-        return value.formatted(.number.precision(.fractionLength(0...2)))
-    }
-    return value.formatted(.number.precision(.significantDigits(2)))
-}
-
 private struct SeriesCard: View {
     let series: MetricSeries
-    let currency: CurrencyOption
-    let multiplier: Int
+    let selection: [String: String]
+    @Environment(\.colorPalette) private var palette
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(series.title).font(.headline)
-                Spacer()
-                Text(formatMetric(series.total, unit: series.unit, currency: currency, multiplier: multiplier))
-                    .font(.headline.monospacedDigit()).foregroundStyle(.primary)
-            }
-
-            // 1 本の横棒に、各項目の割合を色で積み上げて表現（normalized stacking）。
-            Chart(series.items) { item in
-                BarMark(
-                    x: .value("割合", item.value),
-                    y: .value("系列", series.title),
-                    stacking: .normalized
-                )
-                .foregroundStyle(metricColor(item.colorIndex))
-            }
-            .chartXAxis(.hidden)
-            .chartYAxis(.hidden)
-            .frame(height: 28)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-
-            // 色分けの内訳リスト（実数値＋割合）
-            ForEach(series.items) { item in
-                HStack(spacing: 8) {
-                    Circle().fill(metricColor(item.colorIndex)).frame(width: 8, height: 8)
-                    Text(item.label).font(.caption).foregroundStyle(.secondary)
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(series.title).typography(.titleSmall).foregroundStyle(palette.onSurface)
                     Spacer()
-                    if series.total > 0 {
-                        Text("\((item.value / series.total).formatted(.percent.precision(.fractionLength(0))))")
-                            .font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                    StatDisplay(value: series.format(series.total, selection), size: .small, alignment: .trailing)
+                }
+
+                Chart(series.items) { item in
+                    BarMark(
+                        x: .value("割合", item.value),
+                        y: .value("系列", series.title),
+                        stacking: .normalized
+                    )
+                    .foregroundStyle(metricColor(item.colorIndex))
+                }
+                .chartXAxis(.hidden)
+                .chartYAxis(.hidden)
+                .frame(height: 24)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                VStack(spacing: 8) {
+                    ForEach(series.items) { item in
+                        HStack(spacing: 8) {
+                            Circle().fill(metricColor(item.colorIndex)).frame(width: 8, height: 8)
+                            Text(item.label).typography(.bodySmall).foregroundStyle(palette.onSurfaceVariant)
+                            Spacer()
+                            if series.total > 0 {
+                                Text("\((item.value / series.total).formatted(.percent.precision(.fractionLength(0))))")
+                                    .typography(.labelSmall).monospacedDigit().foregroundStyle(palette.outline)
+                            }
+                            Text(series.format(item.value, selection))
+                                .typography(.bodySmall).monospacedDigit().foregroundStyle(palette.onSurface)
+                        }
                     }
-                    Text(formatMetric(item.value, unit: series.unit, currency: currency, multiplier: multiplier))
-                        .font(.caption.monospacedDigit()).foregroundStyle(.primary)
                 }
             }
         }
-        .padding(16)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
     }
 }
