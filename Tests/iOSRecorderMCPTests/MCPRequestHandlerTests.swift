@@ -120,6 +120,106 @@ import iOSRecorderTestSupport
         #expect(text?.contains("\"intent\":\"search\"") == true)
     }
 
+    @Test func getCaptureElidesBinaryResponseBody() async {
+        let entry: [String: Any] = [
+            "id": UUID().uuidString, "method": "GET",
+            "url": "https://img.example/x.jpg", "host": "img.example",
+            "requestHeaders": [String: String](),
+            "responseHeaders": ["Content-Type": "image/jpeg", "Content-Length": "124534"],
+            "responseBody": String(repeating: "A", count: 4096),
+            "startedAt": "2026-06-06T00:00:00Z", "duration": 0.1
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: [entry])
+        let net = Artifact(kind: ArtifactKind(rawValue: "network"), mediaType: "application/json",
+                           data: data, attributes: ["type": "NetworkLog"])
+        let handler = await makeHandler(seed: [RecordFixtures.make(id: RecordID(rawValue: "n1"), artifacts: [net])])
+        let response = await send(handler, [
+            "jsonrpc": "2.0", "id": 30, "method": "tools/call",
+            "params": ["name": "get_capture", "arguments": ["id": "n1"]]
+        ])
+        let content = (response?["result"] as? [String: Any])?["content"] as? [[String: Any]]
+        let text = content?.compactMap { $0["text"] as? String }.first { $0.contains("network") }
+        #expect(text?.contains("elided") == true)
+        #expect(text?.contains("image/jpeg") == true)
+        #expect(text?.contains("124534") == true)
+        #expect(text?.contains(String(repeating: "A", count: 4096)) == false)
+    }
+
+    @Test func getCaptureKeepsTextualResponseBody() async {
+        let entry: [String: Any] = [
+            "id": UUID().uuidString, "method": "POST",
+            "url": "https://api.example/v1", "host": "api.example",
+            "requestHeaders": [String: String](),
+            "responseHeaders": ["Content-Type": "application/json; charset=UTF-8"],
+            "responseBody": "{\"keepme\":true}",
+            "startedAt": "2026-06-06T00:00:00Z", "duration": 0.1
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: [entry])
+        let net = Artifact(kind: ArtifactKind(rawValue: "network"), mediaType: "application/json",
+                           data: data, attributes: ["type": "NetworkLog"])
+        let handler = await makeHandler(seed: [RecordFixtures.make(id: RecordID(rawValue: "n2"), artifacts: [net])])
+        let response = await send(handler, [
+            "jsonrpc": "2.0", "id": 34, "method": "tools/call",
+            "params": ["name": "get_capture", "arguments": ["id": "n2"]]
+        ])
+        let content = (response?["result"] as? [String: Any])?["content"] as? [[String: Any]]
+        let text = content?.compactMap { $0["text"] as? String }.first { $0.contains("network") }
+        #expect(text?.contains("keepme") == true)
+        #expect(text?.contains("elided") == false)
+    }
+
+    @Test func getCaptureStripsDebugTimelinePayload() async {
+        let event: [String: Any] = [
+            "id": UUID().uuidString, "at": "2026-06-06T00:00:00Z",
+            "category": "agent", "name": "tool_call", "summary": "web_search call",
+            "attributes": ["payloadType": "TokenUsage", "tool": "web_search"],
+            "payload": Data("SECRETPAYLOAD".utf8).base64EncodedString()
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: [event])
+        let timeline = Artifact(kind: ArtifactKind(rawValue: "debug_timeline"), mediaType: "application/json",
+                                data: data, attributes: ["type": "DebugEvent"])
+        let handler = await makeHandler(seed: [RecordFixtures.make(id: RecordID(rawValue: "t1"), artifacts: [timeline])])
+        let response = await send(handler, [
+            "jsonrpc": "2.0", "id": 31, "method": "tools/call",
+            "params": ["name": "get_capture", "arguments": ["id": "t1"]]
+        ])
+        let content = (response?["result"] as? [String: Any])?["content"] as? [[String: Any]]
+        let text = content?.compactMap { $0["text"] as? String }.first { $0.contains("debug_timeline") }
+        #expect(text?.contains("web_search call") == true)   // summary は残る
+        #expect(text?.contains("payload") == false)          // payload / payloadType は消える
+        #expect(text?.contains(Data("SECRETPAYLOAD".utf8).base64EncodedString()) == false)
+    }
+
+    @Test func getCaptureFiltersByKinds() async {
+        let record = RecordFixtures.make(id: RecordID(rawValue: "k1"), artifacts: [
+            .state(json: Data("{\"a\":1}".utf8)),
+            .log(text: "LOGLINE")
+        ])
+        let handler = await makeHandler(seed: [record])
+        let response = await send(handler, [
+            "jsonrpc": "2.0", "id": 32, "method": "tools/call",
+            "params": ["name": "get_capture", "arguments": ["id": "k1", "kinds": ["log"]]]
+        ])
+        let content = (response?["result"] as? [String: Any])?["content"] as? [[String: Any]]
+        let texts = content?.compactMap { $0["text"] as? String } ?? []
+        #expect(texts.contains { $0.contains("LOGLINE") })
+        #expect(texts.contains { $0.contains("[state") } == false)
+    }
+
+    @Test func getCaptureRespectsMaxBytes() async {
+        let record = RecordFixtures.make(id: RecordID(rawValue: "m1"),
+                                         artifacts: [.log(text: String(repeating: "x", count: 5000))])
+        let handler = await makeHandler(seed: [record])
+        let response = await send(handler, [
+            "jsonrpc": "2.0", "id": 33, "method": "tools/call",
+            "params": ["name": "get_capture", "arguments": ["id": "m1", "maxBytes": 100]]
+        ])
+        let content = (response?["result"] as? [String: Any])?["content"] as? [[String: Any]]
+        let text = content?.compactMap { $0["text"] as? String }.first { $0.contains("[log") }
+        #expect(text?.contains("truncated") == true)
+        #expect((text?.utf8.count ?? .max) < 400)
+    }
+
     @Test func getCaptureMissingReturnsIsError() async {
         let handler = await makeHandler()
         let response = await send(handler, [

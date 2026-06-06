@@ -94,12 +94,14 @@ public actor MCPRequestHandler {
                 ],
                 [
                     "name": "get_capture",
-                    "description": "指定 id の記録を取得（画像 + state + ログ + network）。非画像は [kind <型名>] 付きテキスト、画像は maxDimension(既定 1024)px に縮小して返す。",
+                    "description": "指定 id の記録を取得（画像 + state + ログ + network + debug_timeline）。非画像は [kind <型名>] 付きテキスト、画像は maxDimension(既定 1024)px に縮小。network のバイナリ応答ボディ（画像等）は省略し、debug_timeline の payload は除去して返す。kinds で種別を絞り、maxBytes で各 artifact のテキスト量を制限できる。",
                     "inputSchema": [
                         "type": "object",
                         "properties": [
                             "id": ["type": "string"],
-                            "maxDimension": ["type": "integer", "description": "画像の最大辺(px)。既定 1024。0 で原寸。"]
+                            "maxDimension": ["type": "integer", "description": "画像の最大辺(px)。既定 1024。0 で原寸。"],
+                            "kinds": ["type": "array", "items": ["type": "string"], "description": "返す artifact 種別を絞る（例: [\"debug_timeline\"]）。未指定で全種別。"],
+                            "maxBytes": ["type": "integer", "description": "各 artifact テキストの最大バイト数。超過分は truncate。未指定で無制限。"]
                         ],
                         "required": ["id"]
                     ]
@@ -145,9 +147,12 @@ public actor MCPRequestHandler {
                 return response(id: id, error: (-32602, "missing argument: id"))
             }
             let maxDimension = arguments["maxDimension"] as? Int ?? 1024
+            let kinds = (arguments["kinds"] as? [String]).map { Set($0.map { ArtifactKind(rawValue: $0) }) }
+            let maxBytes = arguments["maxBytes"] as? Int
             do {
                 let record = try await server.getCapture(RecordID(rawValue: rawID))
-                return response(id: id, result: ["content": Self.recordContent(record, maxDimension: maxDimension)])
+                return response(id: id, result: ["content": Self.recordContent(
+                    record, maxDimension: maxDimension, kinds: kinds, maxBytes: maxBytes)])
             } catch {
                 return response(id: id, result: [
                     "content": [["type": "text", "text": "capture not found: \(rawID)"]],
@@ -239,7 +244,12 @@ public actor MCPRequestHandler {
         return String(decoding: data, as: UTF8.self)
     }
 
-    private static func recordContent(_ record: Record, maxDimension: Int) -> [[String: Any]] {
+    private static func recordContent(
+        _ record: Record,
+        maxDimension: Int,
+        kinds: Set<ArtifactKind>? = nil,
+        maxBytes: Int? = nil
+    ) -> [[String: Any]] {
         var content: [[String: Any]] = []
         let meta: [String: Any] = [
             "id": record.id.rawValue,
@@ -253,6 +263,7 @@ public actor MCPRequestHandler {
             content.append(["type": "text", "text": String(decoding: metaData, as: UTF8.self)])
         }
         for artifact in record.artifacts {
+            if let kinds, !kinds.contains(artifact.kind) { continue }
             if artifact.mediaType.hasPrefix("image/") {
                 let (imageData, mimeType) = ImageDownscaler.downscale(artifact.data, maxDimension: maxDimension)
                     ?? (artifact.data, artifact.mediaType)
@@ -263,11 +274,8 @@ public actor MCPRequestHandler {
                 ])
             } else {
                 let typeLabel = artifact.attributes["type"].map { " <\($0)>" } ?? ""
-                let isText = artifact.mediaType.hasPrefix("text/")
-                    || artifact.mediaType == "application/json"
-                let body = isText
-                    ? String(decoding: artifact.data, as: UTF8.self)
-                    : "base64(\(artifact.mediaType)): " + artifact.data.base64EncodedString()
+                var body = bodyText(for: artifact)
+                if let maxBytes { body = cap(body, maxBytes: maxBytes) }
                 content.append([
                     "type": "text",
                     "text": "[\(artifact.kind.rawValue)\(typeLabel)] " + body
@@ -275,6 +283,78 @@ public actor MCPRequestHandler {
             }
         }
         return content
+    }
+
+    /// 非画像 artifact のテキスト本文。network/debug_timeline は読み出し時にサニタイズする
+    /// （バイナリ応答ボディの省略・base64 payload の除去）。それ以外は従来どおり。
+    private static func bodyText(for artifact: Artifact) -> String {
+        switch artifact.kind.rawValue {
+        case "network":
+            if let sanitized = sanitizedNetworkJSON(artifact.data) { return sanitized }
+        case "debug_timeline":
+            if let stripped = strippedTimelineJSON(artifact.data) { return stripped }
+        default:
+            break
+        }
+        let isText = artifact.mediaType.hasPrefix("text/") || artifact.mediaType == "application/json"
+        return isText
+            ? String(decoding: artifact.data, as: UTF8.self)
+            : "base64(\(artifact.mediaType)): " + artifact.data.base64EncodedString()
+    }
+
+    /// network artifact の各エントリで、Content-Type が非テキスト（画像/動画/バイナリ）の
+    /// responseBody をプレースホルダに置換する。token を食う mojibake を AI に渡さない。
+    private static func sanitizedNetworkJSON(_ data: Data) -> String? {
+        guard var entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
+        for index in entries.indices {
+            let headers = entries[index]["responseHeaders"] as? [String: Any] ?? [:]
+            let contentType = headerValue(headers, "Content-Type") ?? ""
+            if !isTextualContentType(contentType), let bodyValue = entries[index]["responseBody"] as? String {
+                let size = headerValue(headers, "Content-Length") ?? "\(bodyValue.utf8.count)"
+                let label = contentType.isEmpty ? "binary" : contentType
+                entries[index]["responseBody"] = "<elided \(label), \(size) bytes>"
+            }
+        }
+        guard let out = try? JSONSerialization.data(withJSONObject: entries, options: [.sortedKeys, .withoutEscapingSlashes]) else { return nil }
+        return String(decoding: out, as: UTF8.self)
+    }
+
+    /// debug_timeline artifact の各イベントから、summary と冗長な base64 `payload` を除去する。
+    /// summary が人間/AI 可読な要約を持つため payload は MCP 出力では不要。
+    private static func strippedTimelineJSON(_ data: Data) -> String? {
+        guard var events = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
+        for index in events.indices {
+            events[index].removeValue(forKey: "payload")
+            if var attrs = events[index]["attributes"] as? [String: Any] {
+                attrs.removeValue(forKey: "payloadType")
+                events[index]["attributes"] = attrs
+            }
+        }
+        guard let out = try? JSONSerialization.data(withJSONObject: events, options: [.sortedKeys, .withoutEscapingSlashes]) else { return nil }
+        return String(decoding: out, as: UTF8.self)
+    }
+
+    private static func headerValue(_ headers: [String: Any], _ name: String) -> String? {
+        for (key, value) in headers where key.caseInsensitiveCompare(name) == .orderedSame {
+            return value as? String
+        }
+        return nil
+    }
+
+    private static func isTextualContentType(_ contentType: String) -> Bool {
+        let lower = contentType.lowercased()
+        if lower.isEmpty { return true }   // 不明な時は保持（過剰省略を避ける）
+        if lower.hasPrefix("text/") { return true }
+        return lower.contains("json") || lower.contains("xml") || lower.contains("javascript")
+            || lower.contains("html") || lower.contains("csv") || lower.contains("x-www-form-urlencoded")
+    }
+
+    /// UTF-8 バイト数で上限を超えたテキストを truncate する（最後の安全網）。
+    private static func cap(_ text: String, maxBytes: Int) -> String {
+        let utf8 = Array(text.utf8)
+        guard utf8.count > maxBytes else { return text }
+        let head = String(decoding: utf8.prefix(maxBytes), as: UTF8.self)
+        return head + "\n…(truncated to \(maxBytes) bytes, \(utf8.count) total)"
     }
 
     private static func iso(_ date: Date) -> String {
