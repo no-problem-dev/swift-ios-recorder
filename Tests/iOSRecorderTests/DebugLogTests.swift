@@ -50,6 +50,21 @@ private func event(_ category: String, _ name: String, _ summary: String = "x", 
         #expect(await source.measure(ctx) == nil)
     }
 
+    @Test func timelineArtifactOmitsPayload() async {
+        let log = DebugLog()
+        log.emit(DebugEvent(
+            category: "agent", name: "usage", summary: "in 13312 / out 12 tok", at: t0,
+            encoding: ["inputTokens": 13312, "outputTokens": 12]
+        ))
+        let source = DebugLogSource(log: log)
+        let artifact = await source.measure(ctx)
+        let json = String(decoding: artifact!.data, as: UTF8.self)
+        #expect(json.contains("in 13312 / out 12 tok"))   // summary は残る
+        #expect(json.contains("payload") == false)         // payload / payloadType は消える
+        // ライブイベントは payload を保持したまま（アプリ内詳細ビュー用）。
+        #expect(log.events.first?.payload != nil)
+    }
+
     @Test func metricsSourceRunsExtractors() async {
         let log = DebugLog()
         log.emit(event("agent", "tool_call"))

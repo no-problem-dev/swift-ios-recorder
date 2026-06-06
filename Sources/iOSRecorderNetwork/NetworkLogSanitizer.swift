@@ -45,4 +45,32 @@ public enum NetworkLogSanitizer {
         guard text.count > limit else { return text }
         return String(text.prefix(limit)) + "\n…(truncated, \(text.count) chars total)"
     }
+
+    /// ヘッダを大小無視で引く（HTTP ヘッダは case-insensitive）。
+    public static func headerValue(_ headers: [String: String], _ name: String) -> String? {
+        for (key, value) in headers where key.caseInsensitiveCompare(name) == .orderedSame { return value }
+        return nil
+    }
+
+    /// Content-Type がテキスト系か。不明（nil/空）は保持側に倒す。
+    public static func isTextualContentType(_ contentType: String?) -> Bool {
+        guard let lower = contentType?.lowercased(), !lower.isEmpty else { return true }
+        if lower.hasPrefix("text/") { return true }
+        return lower.contains("json") || lower.contains("xml") || lower.contains("javascript")
+            || lower.contains("html") || lower.contains("csv") || lower.contains("x-www-form-urlencoded")
+    }
+
+    /// Content-Type が非テキスト（画像/動画/バイナリ）なら body をサイズ付きプレースホルダに置換し、
+    /// テキストなら従来どおり truncate する。mojibake を Record/Bonjour/MCP に流さないための根治点。
+    public static func redactBody(
+        _ body: String?,
+        contentType: String?,
+        contentLength: String?,
+        limit: Int = 4096
+    ) -> String? {
+        guard let body else { return nil }
+        if isTextualContentType(contentType) { return truncate(body, limit: limit) }
+        let size = contentLength ?? "\(body.utf8.count)"
+        return "<elided \(contentType ?? "binary"), \(size) bytes>"
+    }
 }

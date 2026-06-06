@@ -93,6 +93,31 @@ import iOSRecorder
         #expect(red.requestBody?.contains("truncated") == true)
     }
 
+    @Test func elidesBinaryResponseBodyByContentType() {
+        let log = NetworkLog(
+            method: "GET", url: "https://img.example/x.jpg", host: "img.example",
+            statusCode: 200,
+            responseHeaders: ["Content-Type": "image/jpeg", "Content-Length": "124534"],
+            responseBody: String(repeating: "A", count: 4096),
+            startedAt: Date(), duration: 0.1
+        )
+        let red = log.redacted(bodyLimit: 4096)
+        #expect(red.responseBody == "<elided image/jpeg, 124534 bytes>")
+        #expect(red.responseBody?.contains("AAAA") == false)
+    }
+
+    @Test func keepsTextualResponseBody() {
+        let log = NetworkLog(
+            method: "POST", url: "https://api.example/v1", host: "api.example",
+            statusCode: 200,
+            responseHeaders: ["Content-Type": "application/json; charset=UTF-8"],
+            responseBody: "{\"keepme\":true}",
+            startedAt: Date(), duration: 0.1
+        )
+        let red = log.redacted(bodyLimit: 4096)
+        #expect(red.responseBody == "{\"keepme\":true}")
+    }
+
     @Test func codableRoundTrip() throws {
         let log = NetworkLog(
             method: "GET", url: "https://example.com/a", host: "example.com",

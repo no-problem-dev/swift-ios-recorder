@@ -36,6 +36,17 @@ public struct DebugEvent: Sendable, Codable, Identifiable, Equatable {
 }
 
 public extension DebugEvent {
+    /// 不透明な `payload` と型ヒント `attributes["payloadType"]` を落とした複製。
+    /// Bonjour/MCP へ畳む時に冗長な base64 を除き、summary/attributes だけ残す。
+    func withoutPayload() -> DebugEvent {
+        var attrs = attributes
+        attrs.removeValue(forKey: "payloadType")
+        return DebugEvent(
+            id: id, at: at, category: category, name: name,
+            summary: summary, attributes: attrs, payload: nil
+        )
+    }
+
     /// 任意の Encodable 値を payload に詰める。利用側が差し込んだどんな構造体でも
     /// 「全データ」を JSON として保持し、詳細ビューで構造表示できる。
     init(

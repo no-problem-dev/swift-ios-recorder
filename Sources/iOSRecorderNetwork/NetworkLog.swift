@@ -54,8 +54,9 @@ public struct NetworkLog: Identifiable, Sendable, Codable, Equatable {
         URLComponents(string: url)?.path ?? url
     }
 
-    /// 機密ヘッダをマスクし、ボディを truncate した安全な複製。
-    /// Record/Bonjour/MCP へ外に出す前に必ず通す。
+    /// 機密ヘッダをマスクし、ボディをサニタイズした安全な複製。
+    /// Record/Bonjour/MCP へ外に出す前に必ず通す。テキストボディは truncate、
+    /// 非テキスト（画像/動画/バイナリ）ボディはサイズ付きプレースホルダに省略する。
     public func redacted(bodyLimit: Int = 4096) -> NetworkLog {
         NetworkLog(
             id: id,
@@ -63,10 +64,20 @@ public struct NetworkLog: Identifiable, Sendable, Codable, Equatable {
             url: NetworkLogSanitizer.maskURL(url),
             host: host,
             requestHeaders: NetworkLogSanitizer.maskHeaders(requestHeaders),
-            requestBody: requestBody.map { NetworkLogSanitizer.truncate($0, limit: bodyLimit) },
+            requestBody: NetworkLogSanitizer.redactBody(
+                requestBody,
+                contentType: NetworkLogSanitizer.headerValue(requestHeaders, "Content-Type"),
+                contentLength: NetworkLogSanitizer.headerValue(requestHeaders, "Content-Length"),
+                limit: bodyLimit
+            ),
             statusCode: statusCode,
             responseHeaders: NetworkLogSanitizer.maskHeaders(responseHeaders),
-            responseBody: responseBody.map { NetworkLogSanitizer.truncate($0, limit: bodyLimit) },
+            responseBody: NetworkLogSanitizer.redactBody(
+                responseBody,
+                contentType: NetworkLogSanitizer.headerValue(responseHeaders, "Content-Type"),
+                contentLength: NetworkLogSanitizer.headerValue(responseHeaders, "Content-Length"),
+                limit: bodyLimit
+            ),
             errorMessage: errorMessage,
             startedAt: startedAt,
             duration: duration
