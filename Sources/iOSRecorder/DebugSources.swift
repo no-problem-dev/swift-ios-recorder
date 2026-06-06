@@ -22,10 +22,8 @@ public struct DebugLogSource: Source {
         let limit = maxEvents
         let events = await MainActor.run { Array(log.events.suffix(limit)) }
         guard !events.isEmpty else { return nil }
-        // 冗長な base64 `payload`（と型ヒント）は外に出す時だけ落とす。summary が要約を担う。
-        // ライブの DebugLog 上のイベントは payload を保持し、アプリ内の詳細ビューで使える。
-        let stripped = events.map { $0.withoutPayload() }
-        guard let data = try? Self.encoder.encode(stripped) else { return nil }
+        // payload も含めて畳む。開示の段階制御（要約 / 全文）は読み出し側（MCP 等）の責務。
+        guard let data = try? Self.encoder.encode(events) else { return nil }
         return Artifact(
             kind: .debugTimeline,
             mediaType: "application/json",

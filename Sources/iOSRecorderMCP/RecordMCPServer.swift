@@ -1,35 +1,99 @@
 import Foundation
 import iOSRecorder
 
-/// RecordStore を MCP の 2 ツール（list_captures / get_capture）に橋渡しする。
-/// 現状は Store への委譲ロジックのみ。MCP トランスポート接続は M4 で。
+/// デバッグイベントの検索条件。
+public struct DebugEventQuery: Sendable {
+    public var captureID: RecordID?
+    public var category: String?
+    public var name: String?
+    /// summary / name / attributes への部分一致（大文字小文字を無視）。
+    public var text: String?
+    public var since: Date?
+    public var limit: Int = 50
+
+    public init() {}
+}
+
+/// 検索でヒットしたイベントと、それが属する capture。
+public struct DebugEventHit: Sendable {
+    public let captureID: RecordID
+    public let event: DebugEvent
+}
+
+/// RecordStore を MCP ツール群に橋渡しするドメイン層。
 public actor RecordMCPServer {
     private let store: any RecordStore
+    /// captureID 未指定の検索で走査する capture 数の上限。
+    private let maxScannedCaptures = 50
 
     public init(store: any RecordStore) {
         self.store = store
     }
 
-    /// `list_captures(filter?)` の本体。
     public func listCaptures(_ query: RecordQuery = RecordQuery()) async throws -> [RecordSummary] {
         try await store.query(query)
     }
 
-    /// `get_capture(id)` の本体。
     public func getCapture(_ id: RecordID) async throws -> Record {
         try await store.fetch(id)
     }
 
-    /// `delete_capture(id)` の本体。
     public func deleteCapture(_ id: RecordID) async throws {
         try await store.delete(id)
     }
 
-    /// `clear_captures` の本体。
     public func clearCaptures() async throws {
         try await store.removeAll()
     }
 
-    // TODO(M4): MCP Swift SDK（stdio）に接続し、上記を list_captures / get_capture
-    // ツールとして公開する。
+    /// capture 横断（新しい順）でデバッグイベントを検索する。
+    public func searchEvents(_ query: DebugEventQuery) async throws -> [DebugEventHit] {
+        let records: [Record]
+        if let captureID = query.captureID {
+            records = [try await store.fetch(captureID)]
+        } else {
+            var recordQuery = RecordQuery()
+            recordQuery.kinds = [.debugTimeline]
+            if let since = query.since { recordQuery.timeRange = since ... .distantFuture }
+            let summaries = try await store.query(recordQuery)
+            var fetched: [Record] = []
+            for summary in summaries.prefix(maxScannedCaptures) {
+                if let record = try? await store.fetch(summary.id) { fetched.append(record) }
+            }
+            records = fetched
+        }
+
+        var hits: [DebugEventHit] = []
+        for record in records {
+            for event in Self.timelineEvents(in: record) where Self.matches(event, query) {
+                hits.append(DebugEventHit(captureID: record.id, event: event))
+                if hits.count >= query.limit { return hits }
+            }
+        }
+        return hits
+    }
+
+    /// 指定 capture 内のイベントを payload 込みで 1 件返す。
+    public func getEvent(capture: RecordID, eventID: UUID) async throws -> DebugEvent? {
+        Self.timelineEvents(in: try await store.fetch(capture)).first { $0.id == eventID }
+    }
+
+    static func timelineEvents(in record: Record) -> [DebugEvent] {
+        guard let artifact = record.artifacts.first(where: { $0.kind == .debugTimeline }) else { return [] }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return (try? decoder.decode([DebugEvent].self, from: artifact.data)) ?? []
+    }
+
+    private static func matches(_ event: DebugEvent, _ query: DebugEventQuery) -> Bool {
+        if let category = query.category, event.category != category { return false }
+        if let name = query.name, event.name != name { return false }
+        if let since = query.since, event.at < since { return false }
+        if let text = query.text, !text.isEmpty {
+            let haystack = ([event.name, event.summary]
+                + event.attributes.map { "\($0.key)=\($0.value)" }).joined(separator: " ").lowercased()
+            if !haystack.contains(text.lowercased()) { return false }
+        }
+        return true
+    }
 }

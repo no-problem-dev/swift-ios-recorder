@@ -37,7 +37,7 @@ import iOSRecorderTestSupport
         let response = await send(handler, ["jsonrpc": "2.0", "id": 2, "method": "tools/list"])
         let tools = (response?["result"] as? [String: Any])?["tools"] as? [[String: Any]]
         let names = Set(tools?.compactMap { $0["name"] as? String } ?? [])
-        #expect(names == ["list_captures", "get_capture", "delete_capture", "clear_captures"])
+        #expect(names == ["list_captures", "get_capture", "search_events", "get_event", "delete_capture", "clear_captures"])
     }
 
     @Test func deleteAndClearToolsRespond() async {
@@ -188,6 +188,107 @@ import iOSRecorderTestSupport
         #expect(text?.contains("web_search call") == true)   // summary は残る
         #expect(text?.contains("payload") == false)          // payload / payloadType は消える
         #expect(text?.contains(Data("SECRETPAYLOAD".utf8).base64EncodedString()) == false)
+    }
+
+    private static func timelineArtifact(_ events: [[String: Any]]) -> Artifact {
+        Artifact(kind: ArtifactKind(rawValue: "debug_timeline"), mediaType: "application/json",
+                 data: try! JSONSerialization.data(withJSONObject: events),
+                 attributes: ["type": "DebugEvent"])
+    }
+
+    private static func event(
+        id: UUID = UUID(), at: String = "2026-06-06T00:00:00Z",
+        category: String, name: String, summary: String,
+        attributes: [String: String] = [:], payload: String? = nil
+    ) -> [String: Any] {
+        var dict: [String: Any] = [
+            "id": id.uuidString, "at": at,
+            "category": category, "name": name, "summary": summary,
+            "attributes": attributes
+        ]
+        if let payload { dict["payload"] = Data(payload.utf8).base64EncodedString() }
+        return dict
+    }
+
+    @Test func searchEventsFiltersByCategoryAndReportsPayloadMeta() async {
+        let promptID = UUID()
+        let record = RecordFixtures.make(id: RecordID(rawValue: "s1"), artifacts: [Self.timelineArtifact([
+            Self.event(id: promptID, category: "session", name: "system_prompt", summary: "system prompt 12 文字",
+                       attributes: ["length": "12"], payload: "FULL PROMPT."),
+            Self.event(category: "agent", name: "tool_call", summary: "🔧 web_search")
+        ])])
+        let handler = await makeHandler(seed: [record])
+        let response = await send(handler, [
+            "jsonrpc": "2.0", "id": 40, "method": "tools/call",
+            "params": ["name": "search_events", "arguments": ["category": "session"]]
+        ])
+        let text = ((response?["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String
+        let hits = try! JSONSerialization.jsonObject(with: Data(text!.utf8)) as! [[String: Any]]
+        #expect(hits.count == 1)
+        #expect(hits.first?["eventId"] as? String == promptID.uuidString)
+        #expect(hits.first?["captureId"] as? String == "s1")
+        #expect(hits.first?["payloadBytes"] as? Int == 12)
+        #expect(text?.contains("FULL PROMPT.") == false)
+    }
+
+    @Test func searchEventsMatchesTextAcrossSummaryAndAttributes() async {
+        let record = RecordFixtures.make(id: RecordID(rawValue: "s2"), artifacts: [Self.timelineArtifact([
+            Self.event(category: "agent", name: "tool_call", summary: "🔧 web_search", attributes: ["tool": "web_search"]),
+            Self.event(category: "agent", name: "thinking", summary: "考え中")
+        ])])
+        let handler = await makeHandler(seed: [record])
+        let response = await send(handler, [
+            "jsonrpc": "2.0", "id": 41, "method": "tools/call",
+            "params": ["name": "search_events", "arguments": ["text": "WEB_SEARCH", "limit": 10]]
+        ])
+        let text = ((response?["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String
+        let hits = try! JSONSerialization.jsonObject(with: Data(text!.utf8)) as! [[String: Any]]
+        #expect(hits.count == 1)
+        #expect(hits.first?["name"] as? String == "tool_call")
+    }
+
+    @Test func getEventReturnsFullPayloadText() async {
+        let promptID = UUID()
+        let record = RecordFixtures.make(id: RecordID(rawValue: "e1"), artifacts: [Self.timelineArtifact([
+            Self.event(id: promptID, category: "session", name: "system_prompt", summary: "system prompt",
+                       payload: "ROLE + SCHEMA + EXAMPLES")
+        ])])
+        let handler = await makeHandler(seed: [record])
+        let response = await send(handler, [
+            "jsonrpc": "2.0", "id": 42, "method": "tools/call",
+            "params": ["name": "get_event", "arguments": ["captureId": "e1", "eventId": promptID.uuidString]]
+        ])
+        let text = ((response?["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String
+        let dict = try! JSONSerialization.jsonObject(with: Data(text!.utf8)) as! [String: Any]
+        #expect(dict["payload"] as? String == "ROLE + SCHEMA + EXAMPLES")
+        #expect(dict["payloadBytes"] as? Int == 24)
+    }
+
+    @Test func getEventRespectsMaxBytes() async {
+        let eventID = UUID()
+        let record = RecordFixtures.make(id: RecordID(rawValue: "e2"), artifacts: [Self.timelineArtifact([
+            Self.event(id: eventID, category: "session", name: "system_prompt", summary: "long",
+                       payload: String(repeating: "p", count: 5000))
+        ])])
+        let handler = await makeHandler(seed: [record])
+        let response = await send(handler, [
+            "jsonrpc": "2.0", "id": 43, "method": "tools/call",
+            "params": ["name": "get_event", "arguments": ["captureId": "e2", "eventId": eventID.uuidString, "maxBytes": 100]]
+        ])
+        let text = ((response?["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String
+        let dict = try! JSONSerialization.jsonObject(with: Data(text!.utf8)) as! [String: Any]
+        let payload = dict["payload"] as? String
+        #expect(payload?.contains("truncated") == true)
+        #expect((payload?.utf8.count ?? .max) < 400)
+    }
+
+    @Test func getEventMissingReturnsIsError() async {
+        let handler = await makeHandler(seed: [RecordFixtures.make(id: RecordID(rawValue: "e3"))])
+        let response = await send(handler, [
+            "jsonrpc": "2.0", "id": 44, "method": "tools/call",
+            "params": ["name": "get_event", "arguments": ["captureId": "e3", "eventId": UUID().uuidString]]
+        ])
+        #expect((response?["result"] as? [String: Any])?["isError"] as? Bool == true)
     }
 
     @Test func getCaptureFiltersByKinds() async {

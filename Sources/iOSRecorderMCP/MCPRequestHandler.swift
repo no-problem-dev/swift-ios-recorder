@@ -94,7 +94,7 @@ public actor MCPRequestHandler {
                 ],
                 [
                     "name": "get_capture",
-                    "description": "指定 id の記録を取得（画像 + state + ログ + network + debug_timeline）。非画像は [kind <型名>] 付きテキスト、画像は maxDimension(既定 1024)px に縮小。network のバイナリ応答ボディ（画像等）は省略し、debug_timeline の payload は除去して返す。kinds で種別を絞り、maxBytes で各 artifact のテキスト量を制限できる。",
+                    "description": "指定 id の記録を取得（画像 + state + ログ + network + debug_timeline）。非画像は [kind <型名>] 付きテキスト、画像は maxDimension(既定 1024)px に縮小。network のバイナリ応答ボディ（画像等）は省略し、debug_timeline の payload は除去して返す（イベント全文は search_events → get_event で段階的に取得）。kinds で種別を絞り、maxBytes で各 artifact のテキスト量を制限できる。",
                     "inputSchema": [
                         "type": "object",
                         "properties": [
@@ -104,6 +104,34 @@ public actor MCPRequestHandler {
                             "maxBytes": ["type": "integer", "description": "各 artifact テキストの最大バイト数。超過分は truncate。未指定で無制限。"]
                         ],
                         "required": ["id"]
+                    ]
+                ],
+                [
+                    "name": "search_events",
+                    "description": "デバッグイベントを capture 横断（新しい順）で検索する。payload 本文は含めず、payload のメタ（バイト数・型）と eventId を返す。全文は get_event で取得する。",
+                    "inputSchema": [
+                        "type": "object",
+                        "properties": [
+                            "captureId": ["type": "string", "description": "特定 capture 内だけを検索する"],
+                            "category": ["type": "string", "description": "イベントカテゴリの完全一致（例: session / agent / a2ui）"],
+                            "name": ["type": "string", "description": "イベント名の完全一致（例: system_prompt / tool_result）"],
+                            "text": ["type": "string", "description": "summary / name / attributes への部分一致（大文字小文字無視）"],
+                            "sinceMinutes": ["type": "integer", "description": "直近 N 分のイベントだけに絞る"],
+                            "limit": ["type": "integer", "description": "最大件数。既定 50"]
+                        ]
+                    ]
+                ],
+                [
+                    "name": "get_event",
+                    "description": "デバッグイベント 1 件を payload 全文込みで取得する。テキスト payload は復号して返し、maxBytes で truncate できる。",
+                    "inputSchema": [
+                        "type": "object",
+                        "properties": [
+                            "captureId": ["type": "string"],
+                            "eventId": ["type": "string"],
+                            "maxBytes": ["type": "integer", "description": "payload テキストの最大バイト数。超過分は truncate。未指定で無制限。"]
+                        ],
+                        "required": ["captureId", "eventId"]
                     ]
                 ],
                 [
@@ -159,6 +187,28 @@ public actor MCPRequestHandler {
                     "isError": true
                 ])
             }
+        case "search_events":
+            let query = Self.eventQuery(from: arguments)
+            let hits = (try? await server.searchEvents(query)) ?? []
+            return response(id: id, result: ["content": [["type": "text", "text": Self.eventHitsJSON(hits)]]])
+        case "get_event":
+            guard let rawCaptureID = arguments["captureId"] as? String,
+                  let rawEventID = arguments["eventId"] as? String,
+                  let eventID = UUID(uuidString: rawEventID) else {
+                return response(id: id, error: (-32602, "missing or invalid argument: captureId / eventId"))
+            }
+            let maxBytes = arguments["maxBytes"] as? Int
+            let event = try? await server.getEvent(capture: RecordID(rawValue: rawCaptureID), eventID: eventID)
+            guard let event else {
+                return response(id: id, result: [
+                    "content": [["type": "text", "text": "event not found: \(rawEventID) in capture \(rawCaptureID)"]],
+                    "isError": true
+                ])
+            }
+            return response(id: id, result: ["content": [[
+                "type": "text",
+                "text": Self.eventJSON(event, captureID: rawCaptureID, maxBytes: maxBytes)
+            ]]])
         case "delete_capture":
             guard let rawID = arguments["id"] as? String else {
                 return response(id: id, error: (-32602, "missing argument: id"))
@@ -228,6 +278,63 @@ public actor MCPRequestHandler {
             query.timeRange = cutoff ... Date.distantFuture
         }
         return query
+    }
+
+    private static func eventQuery(from arguments: [String: Any]) -> DebugEventQuery {
+        var query = DebugEventQuery()
+        if let captureID = arguments["captureId"] as? String { query.captureID = RecordID(rawValue: captureID) }
+        if let category = arguments["category"] as? String { query.category = category }
+        if let name = arguments["name"] as? String { query.name = name }
+        if let text = arguments["text"] as? String { query.text = text }
+        if let limit = arguments["limit"] as? Int, limit > 0 { query.limit = limit }
+        if let sinceMinutes = arguments["sinceMinutes"] as? Int, sinceMinutes > 0 {
+            query.since = Date().addingTimeInterval(-Double(sinceMinutes) * 60)
+        }
+        return query
+    }
+
+    /// 検索結果のイベント要約（payload 本文なし・メタのみ）。
+    private static func eventHitsJSON(_ hits: [DebugEventHit]) -> String {
+        let array = hits.map { hit -> [String: Any] in
+            var dict = eventDictionary(hit.event, captureID: hit.captureID.rawValue)
+            if let payload = hit.event.payload {
+                dict["payloadBytes"] = payload.count
+            }
+            return dict
+        }
+        let data = (try? JSONSerialization.data(withJSONObject: array, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data("[]".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// イベント 1 件の完全表現（payload 全文込み）。
+    private static func eventJSON(_ event: DebugEvent, captureID: String, maxBytes: Int?) -> String {
+        var dict = eventDictionary(event, captureID: captureID)
+        if let payload = event.payload {
+            dict["payloadBytes"] = payload.count
+            if let text = String(data: payload, encoding: .utf8) {
+                dict["payload"] = maxBytes.map { cap(text, maxBytes: $0) } ?? text
+            } else {
+                dict["payloadBase64"] = payload.base64EncodedString()
+            }
+        }
+        let data = (try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func eventDictionary(_ event: DebugEvent, captureID: String) -> [String: Any] {
+        var attributes = event.attributes
+        let payloadType = attributes.removeValue(forKey: "payloadType")
+        var dict: [String: Any] = [
+            "captureId": captureID,
+            "eventId": event.id.uuidString,
+            "at": iso(event.at),
+            "category": event.category,
+            "name": event.name,
+            "summary": event.summary,
+            "attributes": attributes
+        ]
+        if let payloadType { dict["payloadType"] = payloadType }
+        return dict
     }
 
     private static func summariesJSON(_ summaries: [RecordSummary]) -> String {

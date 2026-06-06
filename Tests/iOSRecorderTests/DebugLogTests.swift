@@ -50,7 +50,7 @@ private func event(_ category: String, _ name: String, _ summary: String = "x", 
         #expect(await source.measure(ctx) == nil)
     }
 
-    @Test func timelineArtifactOmitsPayload() async {
+    @Test func timelineArtifactKeepsPayload() async {
         let log = DebugLog()
         log.emit(DebugEvent(
             category: "agent", name: "usage", summary: "in 13312 / out 12 tok", at: t0,
@@ -59,10 +59,10 @@ private func event(_ category: String, _ name: String, _ summary: String = "x", 
         let source = DebugLogSource(log: log)
         let artifact = await source.measure(ctx)
         let json = String(decoding: artifact!.data, as: UTF8.self)
-        #expect(json.contains("in 13312 / out 12 tok"))   // summary は残る
-        #expect(json.contains("payload") == false)         // payload / payloadType は消える
-        // ライブイベントは payload を保持したまま（アプリ内詳細ビュー用）。
-        #expect(log.events.first?.payload != nil)
+        #expect(json.contains("in 13312 / out 12 tok"))
+        // payload は capture に同梱され、開示の段階制御は読み出し側（MCP）が担う。
+        #expect(json.contains("payload"))
+        #expect(json.contains("payloadType"))
     }
 
     @Test func metricsSourceRunsExtractors() async {

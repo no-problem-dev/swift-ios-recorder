@@ -20,7 +20,7 @@
 | `iOSRecorderUI` | SwiftUI 統合（フロートボタン・シェイク・アプリ内ビューア） |
 | `iOSRecorderBonjour` | Exporter / Receiver（同一 LAN 即時転送、Network framework） |
 | `iOSRecorderStore` | RecordStore のファイル実装（Mac、1 record = 1 フォルダ） |
-| `iOSRecorderMCP` | RecordStore を `list_captures` / `get_capture` に橋渡し（MCP stdio） |
+| `iOSRecorderMCP` | RecordStore を `list_captures` / `get_capture` / `search_events` / `get_event` に橋渡し（MCP stdio） |
 | `ios-recorder` | Mac companion exe（`serve` / `mcp`） |
 
 ## 使い方
@@ -57,7 +57,7 @@ claude mcp add ios-recorder -- ios-recorder mcp
 ```
 
 これで iPhone でフロートボタンを押す → Mac に届く → Claude Code が
-`list_captures` / `get_capture`(maxDimension で縮小) / `delete_capture` / `clear_captures`
+`list_captures` / `get_capture`(maxDimension で縮小) / `search_events` / `get_event` / `delete_capture` / `clear_captures`
 で画面+state を取得、という UI 確認ループが閉じる。
 
 `ios-recorder serve` は受信機のみを単体起動する headless 運用向けの代替手段。
