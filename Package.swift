@@ -80,6 +80,10 @@ let package = Package(
         .testTarget(
             name: "iOSRecorderNetworkTests",
             dependencies: ["iOSRecorderNetwork", "iOSRecorder"]
+        ),
+        .testTarget(
+            name: "iOSRecorderScreenshotTests",
+            dependencies: ["iOSRecorderScreenshot"]
         )
     ]
 )

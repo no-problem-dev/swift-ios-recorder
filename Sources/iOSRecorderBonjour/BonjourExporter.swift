@@ -45,7 +45,11 @@ public struct BonjourExporter: Exporter {
     }
 
     public func export(_ record: Record) async throws {
-        let payload = Framing.frame(try codec.encode(record))
+        let encoded = try codec.encode(record)
+        guard encoded.count <= Framing.maxPayloadBytes else {
+            throw ExporterError.payloadTooLarge(bytes: encoded.count)
+        }
+        let payload = Framing.frame(encoded)
         try await withTimeout(timeout) {
             // 1) 直近に通った具体アドレスを最優先で試す（ブラウズ不要 → 速くて安定）。
             if let cached = await cache.endpoint {

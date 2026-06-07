@@ -57,4 +57,35 @@ public enum RecordStoreError: Error, Sendable, Equatable {
 public enum ExporterError: Error, Sendable, Equatable {
     case notImplemented(String)
     case transportFailed(String)
+    /// 記録が転送路の上限を超えていて、再試行しても永遠に送れない。
+    /// outbox はこれを退避せず破棄してよい（先頭詰まり防止）。
+    case payloadTooLarge(bytes: Int)
+}
+
+/// 保持領域の使用状況。MCP の get_storage_info が返す。
+public struct StorageInfo: Sendable, Codable, Equatable {
+    public let totalRecords: Int
+    public let totalBytes: Int
+    public let oldestRecordedAt: Date?
+    public let newestRecordedAt: Date?
+    public let location: String?
+
+    public init(
+        totalRecords: Int,
+        totalBytes: Int,
+        oldestRecordedAt: Date? = nil,
+        newestRecordedAt: Date? = nil,
+        location: String? = nil
+    ) {
+        self.totalRecords = totalRecords
+        self.totalBytes = totalBytes
+        self.oldestRecordedAt = oldestRecordedAt
+        self.newestRecordedAt = newestRecordedAt
+        self.location = location
+    }
+}
+
+/// 保持領域の使用状況を報告できる能力（Store 実装が任意で備える）。
+public protocol StorageReporting: Sendable {
+    func storageInfo() async -> StorageInfo
 }

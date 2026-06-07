@@ -4,30 +4,61 @@ import iOSRecorder
 
 /// 実行中のキーウィンドウを drawHierarchy でラスタライズする Source。
 /// `ImageRenderer` と違い UIViewRepresentable のネイティブ要素も確実に写る。
+///
+/// 保存形式は縮小 JPEG。フル解像度 PNG（iPhone 16 Pro で 1 枚 5MB 超）はメモリ・転送・
+/// ディスクの支配的コストであり、MCP が AI に渡す画像も同じ上限に縮小されるため
+/// ソース段階で縮小しても情報は失われない。
 public struct ScreenshotSource: Source {
     public let kind = ArtifactKind.screenshot
     private let scale: CGFloat
+    private let maxDimension: CGFloat
+    private let jpegQuality: CGFloat
 
-    /// - Parameter scale: 0 ならデバイススケール。縮小して送りたい時に指定。
-    public init(scale: CGFloat = 0) {
+    /// - Parameters:
+    ///   - scale: レンダリング解像度。0 ならデバイススケール。
+    ///   - maxDimension: 出力画像の長辺上限 px。0 で無制限（原寸）。
+    ///   - jpegQuality: JPEG 品質（0–1）。
+    public init(scale: CGFloat = 0, maxDimension: CGFloat = 1024, jpegQuality: CGFloat = 0.8) {
         self.scale = scale
+        self.maxDimension = maxDimension
+        self.jpegQuality = jpegQuality
     }
 
     public func measure(_ context: RecordContext) async -> Artifact? {
-        await MainActor.run {
-            guard let window = Self.keyWindow() else { return nil }
-            let format = UIGraphicsImageRendererFormat()
-            if scale > 0 { format.scale = scale }
-            let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: format)
-            let image = renderer.image { _ in
-                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
-            }
-            guard let data = image.pngData() else { return nil }
-            return Artifact.screenshot(pngData: data, attributes: [
-                "width": "\(Int(window.bounds.width))",
-                "height": "\(Int(window.bounds.height))"
-            ])
+        // drawHierarchy だけが MainActor 必須。重いエンコードは外で行い UI を固めない。
+        let rendered = await MainActor.run { Self.render(scale: scale) }
+        guard let rendered else { return nil }
+        guard let data = Self.encode(rendered.image, maxDimension: maxDimension, quality: jpegQuality) else { return nil }
+        return Artifact.screenshot(jpegData: data, attributes: [
+            "width": "\(Int(rendered.bounds.width))",
+            "height": "\(Int(rendered.bounds.height))"
+        ])
+    }
+
+    @MainActor
+    private static func render(scale: CGFloat) -> (image: UIImage, bounds: CGRect)? {
+        guard let window = keyWindow() else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        if scale > 0 { format.scale = scale }
+        let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: format)
+        let image = renderer.image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
+        return (image, window.bounds)
+    }
+
+    /// 長辺を maxDimension に収めて JPEG 化する。UIGraphicsImageRenderer はスレッド安全。
+    private static func encode(_ image: UIImage, maxDimension: CGFloat, quality: CGFloat) -> Data? {
+        let pixelSize = CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
+        let target = ScreenshotSizing.fitted(pixelSize, maxDimension: maxDimension)
+        guard target != pixelSize else { return image.jpegData(compressionQuality: quality) }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let resized = UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
+        }
+        return resized.jpegData(compressionQuality: quality)
     }
 
     @MainActor

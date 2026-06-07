@@ -64,3 +64,45 @@ import iOSRecorderTestSupport
         #expect(try await server.listCaptures().isEmpty)
     }
 }
+
+@Suite struct SearchEventsScanWindowTests {
+    private func timelineRecord(_ id: String, at second: TimeInterval) -> Record {
+        let event: [String: Any] = [
+            "id": UUID().uuidString, "at": "2026-06-06T00:00:00Z",
+            "category": "agent", "name": "step", "summary": "in \(id)",
+            "attributes": [String: String]()
+        ]
+        let artifact = Artifact(
+            kind: ArtifactKind(rawValue: "debug_timeline"), mediaType: "application/json",
+            data: try! JSONSerialization.data(withJSONObject: [event]),
+            attributes: ["type": "DebugEvent"]
+        )
+        return RecordFixtures.make(
+            id: RecordID(rawValue: id),
+            recordedAt: Date(timeIntervalSince1970: second),
+            artifacts: [artifact]
+        )
+    }
+
+    @Test func reportsTruncationWhenScanWindowCutsOff() async throws {
+        let store = FakeRecordStore()
+        try await store.save(timelineRecord("old", at: 1))
+        try await store.save(timelineRecord("new", at: 2))
+        let server = RecordMCPServer(store: store, maxScannedCaptures: 1)
+
+        let result = try await server.searchEvents(DebugEventQuery())
+        #expect(result.scannedCaptures == 1)
+        #expect(result.scanTruncated == true)
+    }
+
+    @Test func reportsCompleteScanWhenWithinWindow() async throws {
+        let store = FakeRecordStore()
+        try await store.save(timelineRecord("only", at: 1))
+        let server = RecordMCPServer(store: store)
+
+        let result = try await server.searchEvents(DebugEventQuery())
+        #expect(result.hits.count == 1)
+        #expect(result.scannedCaptures == 1)
+        #expect(result.scanTruncated == false)
+    }
+}

@@ -2,6 +2,14 @@ import Foundation
 
 /// 4 バイトのビッグエンディアン長プレフィックス + payload。
 enum Framing {
+    /// 1 フレームの上限。壊れた/悪意ある長さプレフィックス（最大 4GB）で
+    /// 受信側が巨大メモリ確保に突入しないための防壁。正常な記録はこれを大きく下回る。
+    static let maxPayloadBytes = 64 * 1024 * 1024
+
+    static func isAcceptableLength(_ length: Int) -> Bool {
+        length > 0 && length <= maxPayloadBytes
+    }
+
     static func frame(_ payload: Data) -> Data {
         let length = UInt32(payload.count)
         var out = Data(capacity: payload.count + 4)

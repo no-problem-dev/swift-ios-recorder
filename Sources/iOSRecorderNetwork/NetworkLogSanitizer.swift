@@ -1,20 +1,28 @@
 import Foundation
 
-/// 機密ヘッダのマスクとボディの truncate。実通信なしで単体テストできる。
+/// 機密ヘッダ/クエリ/ボディのマスクとボディの truncate。実通信なしで単体テストできる。
+///
+/// 方針: 「キー名が秘密情報を示唆するなら値を隠す」。完全一致リストではなく部分一致で
+/// 判定し、`client_secret` / `oauth_signature` / `X-Auth-Token` のような複合キーも捕捉する。
+/// デバッグ計器なので false positive（無害な値を隠す）は許容し、漏れの方を防ぐ。
 public enum NetworkLogSanitizer {
-    static let sensitiveHeaders: Set<String> = [
-        "authorization", "cookie", "set-cookie", "x-api-key", "api-key", "proxy-authorization"
+    /// キー名にこれらが含まれたら機密とみなす（lowercase 比較）。
+    static let sensitiveKeyFragments = [
+        "password", "secret", "token", "auth", "credential", "signature",
+        "apikey", "api-key", "api_key", "cookie"
     ]
 
-    /// URL クエリで機密として扱うキー（Gemini の ?key= 等）。
-    static let sensitiveQueryKeys: Set<String> = [
-        "key", "api_key", "apikey", "access_token", "token", "auth", "password", "secret", "sig", "signature"
-    ]
+    /// ヘッダ名・クエリキー・JSON キーが機密を示唆するか。
+    static func isSensitiveKey(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        if lower == "key" || lower == "sig" || lower.hasSuffix("key") { return true }
+        return sensitiveKeyFragments.contains { lower.contains($0) }
+    }
 
     public static func maskHeaders(_ headers: [String: String]) -> [String: String] {
         var result: [String: String] = [:]
         for (key, value) in headers {
-            result[key] = sensitiveHeaders.contains(key.lowercased()) ? "***" : value
+            result[key] = isSensitiveKey(key) ? "***" : value
         }
         return result
     }
@@ -24,12 +32,28 @@ public enum NetworkLogSanitizer {
     public static func maskURL(_ url: String) -> String {
         guard var components = URLComponents(string: url), let items = components.queryItems else { return url }
         components.queryItems = items.map { item in
-            sensitiveQueryKeys.contains(item.name.lowercased())
-                ? URLQueryItem(name: item.name, value: "***")
-                : item
+            isSensitiveKey(item.name) ? URLQueryItem(name: item.name, value: "***") : item
         }
         return components.string ?? url
     }
+
+    /// テキストボディ中の JSON 文字列値のうち、キーが機密を示唆するものを *** に置換する。
+    /// POST body の `{"api_key": "..."}` や応答の `{"session_token": "..."}` を隠す。
+    public static func maskJSONStringValues(_ text: String) -> String {
+        var result = text
+        for match in Self.jsonStringPair.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+            guard let keyRange = Range(match.range(at: 1), in: text),
+                  let valueRange = Range(match.range(at: 2), in: result),
+                  isSensitiveKey(String(text[keyRange])) else { continue }
+            result.replaceSubrange(valueRange, with: "***")
+        }
+        return result
+    }
+
+    /// `"key" : "value"` のペア。group 1 = key、group 2 = value（エスケープ対応）。
+    private static let jsonStringPair = try! NSRegularExpression(
+        pattern: #""((?:[^"\\]|\\.)*)"\s*:\s*"((?:[^"\\]|\\.)*)""#
+    )
 
     public static func bodyString(_ data: Data?, limit: Int = 4096) -> String? {
         guard let data, !data.isEmpty else { return nil }
@@ -52,7 +76,7 @@ public enum NetworkLogSanitizer {
         return nil
     }
 
-    /// Content-Type がテキスト系か。不明（nil/空）は保持側に倒す。
+    /// Content-Type がテキスト系か。不明（nil/空）は保持側に倒す（実体は redactBody で sniff）。
     public static func isTextualContentType(_ contentType: String?) -> Bool {
         guard let lower = contentType?.lowercased(), !lower.isEmpty else { return true }
         if lower.hasPrefix("text/") { return true }
@@ -60,8 +84,14 @@ public enum NetworkLogSanitizer {
             || lower.contains("html") || lower.contains("csv") || lower.contains("x-www-form-urlencoded")
     }
 
+    /// バイナリを誤って UTF-8 テキスト化した痕跡（置換文字 U+FFFD）があるか。
+    static func looksBinary(_ text: String) -> Bool {
+        text.prefix(2048).contains("\u{FFFD}")
+    }
+
     /// Content-Type が非テキスト（画像/動画/バイナリ）なら body をサイズ付きプレースホルダに置換し、
-    /// テキストなら従来どおり truncate する。mojibake を Record/Bonjour/MCP に流さないための根治点。
+    /// テキストなら機密 JSON 値をマスクして truncate する。Content-Type 不明でもバイナリの痕跡が
+    /// あれば省略する。mojibake と機密を Record/Bonjour/MCP に流さないための根治点。
     public static func redactBody(
         _ body: String?,
         contentType: String?,
@@ -69,8 +99,13 @@ public enum NetworkLogSanitizer {
         limit: Int = 4096
     ) -> String? {
         guard let body else { return nil }
-        if isTextualContentType(contentType) { return truncate(body, limit: limit) }
         let size = contentLength ?? "\(body.utf8.count)"
-        return "<elided \(contentType ?? "binary"), \(size) bytes>"
+        if !isTextualContentType(contentType) {
+            return "<elided \(contentType ?? "binary"), \(size) bytes>"
+        }
+        if (contentType ?? "").isEmpty, looksBinary(body) {
+            return "<elided binary, \(size) bytes>"
+        }
+        return truncate(maskJSONStringValues(body), limit: limit)
     }
 }

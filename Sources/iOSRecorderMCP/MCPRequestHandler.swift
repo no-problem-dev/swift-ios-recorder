@@ -9,19 +9,22 @@ public actor MCPRequestHandler {
     private let serverVersion: String
     private let status: (any ReceiverStatusProviding)?
     private let control: (any ReceiverControlling)?
+    private let storage: (any StorageReporting)?
 
     public init(
         store: any RecordStore,
         name: String = "ios-recorder",
         version: String = "0.1.0",
         status: (any ReceiverStatusProviding)? = nil,
-        control: (any ReceiverControlling)? = nil
+        control: (any ReceiverControlling)? = nil,
+        storage: (any StorageReporting)? = nil
     ) {
         self.server = RecordMCPServer(store: store)
         self.serverName = name
         self.serverVersion = version
         self.status = status
         self.control = control
+        self.storage = storage
     }
 
     /// JSON-RPC リクエスト 1 件を処理。通知（応答不要）なら nil。
@@ -72,6 +75,13 @@ public actor MCPRequestHandler {
                 "inputSchema": ["type": "object", "properties": [String: Any]()]
             ])
         }
+        if storage != nil {
+            tools.append([
+                "name": "get_storage_info",
+                "description": "保存済み記録の使用状況を返す（件数/総バイト数/最古・最新の記録時刻/保存先）。肥大化の確認と clear_captures の判断材料。",
+                "inputSchema": ["type": "object", "properties": [String: Any]()]
+            ])
+        }
         return ["tools": tools]
     }
 
@@ -79,7 +89,7 @@ public actor MCPRequestHandler {
         [
                 [
                     "name": "list_captures",
-                    "description": "デバイスから届いた記録の一覧（画像は含まない）。screenName/text/kinds/limit で絞り込み。",
+                    "description": "デバイスから届いた記録の一覧（画像は含まない）。screenName/text/kinds/limit で絞り込み。kinds の例: screenshot / state / log / network / debug_timeline / metrics。",
                     "inputSchema": [
                         "type": "object",
                         "properties": [
@@ -189,8 +199,9 @@ public actor MCPRequestHandler {
             }
         case "search_events":
             let query = Self.eventQuery(from: arguments)
-            let hits = (try? await server.searchEvents(query)) ?? []
-            return response(id: id, result: ["content": [["type": "text", "text": Self.eventHitsJSON(hits)]]])
+            let result = (try? await server.searchEvents(query))
+                ?? DebugEventSearchResult(hits: [], scannedCaptures: 0, scanTruncated: false)
+            return response(id: id, result: ["content": [["type": "text", "text": Self.searchResultJSON(result)]]])
         case "get_event":
             guard let rawCaptureID = arguments["captureId"] as? String,
                   let rawEventID = arguments["eventId"] as? String,
@@ -226,6 +237,10 @@ public actor MCPRequestHandler {
             guard let control else { return response(id: id, error: (-32602, "restart_receiver unavailable")) }
             let snapshot = await control.restart()
             return response(id: id, result: ["content": [["type": "text", "text": "restarted\n" + Self.statusJSON(snapshot)]]])
+        case "get_storage_info":
+            guard let storage else { return response(id: id, error: (-32602, "get_storage_info unavailable")) }
+            let info = await storage.storageInfo()
+            return response(id: id, result: ["content": [["type": "text", "text": Self.storageJSON(info)]]])
         default:
             return response(id: id, error: (-32602, "unknown tool: \(name)"))
         }
@@ -293,16 +308,35 @@ public actor MCPRequestHandler {
         return query
     }
 
-    /// 検索結果のイベント要約（payload 本文なし・メタのみ）。
-    private static func eventHitsJSON(_ hits: [DebugEventHit]) -> String {
-        let array = hits.map { hit -> [String: Any] in
+    /// 検索結果のイベント要約（payload 本文なし・メタのみ）と走査の事実。
+    /// 打ち切りを黙らせない: scanTruncated=true は「見つからない ≠ 存在しない」のサイン。
+    private static func searchResultJSON(_ result: DebugEventSearchResult) -> String {
+        let hits = result.hits.map { hit -> [String: Any] in
             var dict = eventDictionary(hit.event, captureID: hit.captureID.rawValue)
             if let payload = hit.event.payload {
                 dict["payloadBytes"] = payload.count
             }
             return dict
         }
-        let data = (try? JSONSerialization.data(withJSONObject: array, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data("[]".utf8)
+        let envelope: [String: Any] = [
+            "hits": hits,
+            "scannedCaptures": result.scannedCaptures,
+            "scanTruncated": result.scanTruncated
+        ]
+        let data = (try? JSONSerialization.data(withJSONObject: envelope, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func storageJSON(_ info: StorageInfo) -> String {
+        var dict: [String: Any] = [
+            "totalRecords": info.totalRecords,
+            "totalBytes": info.totalBytes,
+            "totalMB": (info.totalBytes + 524_288) / 1_048_576
+        ]
+        dict["oldestRecordedAt"] = info.oldestRecordedAt.map(iso) ?? NSNull()
+        dict["newestRecordedAt"] = info.newestRecordedAt.map(iso) ?? NSNull()
+        dict["location"] = orNull(info.location)
+        let data = (try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)
     }
 

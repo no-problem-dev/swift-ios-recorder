@@ -223,11 +223,14 @@ import iOSRecorderTestSupport
             "params": ["name": "search_events", "arguments": ["category": "session"]]
         ])
         let text = ((response?["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String
-        let hits = try! JSONSerialization.jsonObject(with: Data(text!.utf8)) as! [[String: Any]]
+        let envelope = try! JSONSerialization.jsonObject(with: Data(text!.utf8)) as! [String: Any]
+        let hits = envelope["hits"] as! [[String: Any]]
         #expect(hits.count == 1)
         #expect(hits.first?["eventId"] as? String == promptID.uuidString)
         #expect(hits.first?["captureId"] as? String == "s1")
         #expect(hits.first?["payloadBytes"] as? Int == 12)
+        #expect(envelope["scannedCaptures"] as? Int == 1)
+        #expect(envelope["scanTruncated"] as? Bool == false)
         #expect(text?.contains("FULL PROMPT.") == false)
     }
 
@@ -242,7 +245,7 @@ import iOSRecorderTestSupport
             "params": ["name": "search_events", "arguments": ["text": "WEB_SEARCH", "limit": 10]]
         ])
         let text = ((response?["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String
-        let hits = try! JSONSerialization.jsonObject(with: Data(text!.utf8)) as! [[String: Any]]
+        let hits = (try! JSONSerialization.jsonObject(with: Data(text!.utf8)) as! [String: Any])["hits"] as! [[String: Any]]
         #expect(hits.count == 1)
         #expect(hits.first?["name"] as? String == "tool_call")
     }
@@ -391,6 +394,36 @@ import iOSRecorderTestSupport
         #expect(await control.restartCount == 0)
     }
 
+    @Test func storageInfoToolHiddenWithoutReporter() async {
+        let handler = await makeHandler()
+        let response = await send(handler, ["jsonrpc": "2.0", "id": 50, "method": "tools/list"])
+        let names = Set((((response?["result"] as? [String: Any])?["tools"] as? [[String: Any]]) ?? []).compactMap { $0["name"] as? String })
+        #expect(names.contains("get_storage_info") == false)
+    }
+
+    @Test func storageInfoToolReportsUsage() async {
+        let storage = FakeStorage(info: StorageInfo(
+            totalRecords: 148, totalBytes: 211_000_000,
+            oldestRecordedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            newestRecordedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            location: "~/.iosrecorder/captures"
+        ))
+        let handler = MCPRequestHandler(store: FakeRecordStore(), storage: storage)
+
+        let list = await send(handler, ["jsonrpc": "2.0", "id": 51, "method": "tools/list"])
+        let names = Set((((list?["result"] as? [String: Any])?["tools"] as? [[String: Any]]) ?? []).compactMap { $0["name"] as? String })
+        #expect(names.contains("get_storage_info"))
+
+        let response = await send(handler, [
+            "jsonrpc": "2.0", "id": 52, "method": "tools/call",
+            "params": ["name": "get_storage_info", "arguments": [:]]
+        ])
+        let text = ((response?["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String
+        #expect(text?.contains("\"totalRecords\" : 148") == true)
+        #expect(text?.contains("\"totalBytes\" : 211000000") == true)
+        #expect(text?.contains("captures") == true)
+    }
+
     @Test func restartReceiverToolInvokesControl() async {
         let store = FakeRecordStore()
         let control = FakeControl(snapshot: ReceiverStatusSnapshot(listening: true, port: 50000, startedAt: Date()))
@@ -403,6 +436,11 @@ import iOSRecorderTestSupport
         #expect(text?.contains("restarted") == true)
         #expect(await control.restartCount == 1)
     }
+}
+
+private struct FakeStorage: StorageReporting {
+    let info: StorageInfo
+    func storageInfo() async -> StorageInfo { info }
 }
 
 private struct FakeStatus: ReceiverStatusProviding {

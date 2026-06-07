@@ -167,3 +167,68 @@ import iOSRecorder
         #expect(artifact?.attributes["count"] == "3")
     }
 }
+
+@Suite struct SanitizerSensitiveKeyTests {
+    @Test func masksCompoundQueryKeys() {
+        let url = "https://auth.example/oauth?client_secret=S1&oauth_signature=S2&access_token=S3&state=keepme"
+        let masked = NetworkLogSanitizer.maskURL(url)
+        #expect(masked.contains("client_secret=***"))
+        #expect(masked.contains("oauth_signature=***"))
+        #expect(masked.contains("access_token=***"))
+        #expect(masked.contains("state=keepme"))
+        #expect(masked.contains("S1") == false && masked.contains("S2") == false && masked.contains("S3") == false)
+    }
+
+    @Test func masksNonStandardAuthHeaders() {
+        let masked = NetworkLogSanitizer.maskHeaders([
+            "X-Auth-Token": "secret1",
+            "X-Goog-Api-Key": "secret2",
+            "Content-Type": "application/json",
+            "Accept-Encoding": "gzip"
+        ])
+        #expect(masked["X-Auth-Token"] == "***")
+        #expect(masked["X-Goog-Api-Key"] == "***")
+        #expect(masked["Content-Type"] == "application/json")
+        #expect(masked["Accept-Encoding"] == "gzip")
+    }
+
+    @Test func masksSensitiveJSONStringValuesInBody() {
+        let body = #"{"apiKey":"sk-12345","password":"hunter2","prompt":"hello world","count":3}"#
+        let masked = NetworkLogSanitizer.maskJSONStringValues(body)
+        #expect(masked.contains("sk-12345") == false)
+        #expect(masked.contains("hunter2") == false)
+        #expect(masked.contains(#""apiKey":"***""#))
+        #expect(masked.contains(#""prompt":"hello world""#))   // 非機密はそのまま
+        #expect(masked.contains(#""count":3"#))
+    }
+
+    @Test func redactBodyMasksJSONSecretsInRequestAndResponse() {
+        let log = NetworkLog(
+            method: "POST", url: "https://api.example/v1", host: "api.example",
+            requestHeaders: ["Content-Type": "application/json"],
+            requestBody: #"{"api_key":"SECRET-REQ","q":"weather"}"#,
+            statusCode: 200,
+            responseHeaders: ["Content-Type": "application/json"],
+            responseBody: #"{"session_token":"SECRET-RES","answer":"sunny"}"#,
+            startedAt: Date(), duration: 0.1
+        )
+        let red = log.redacted()
+        #expect(red.requestBody?.contains("SECRET-REQ") == false)
+        #expect(red.requestBody?.contains("weather") == true)
+        #expect(red.responseBody?.contains("SECRET-RES") == false)
+        #expect(red.responseBody?.contains("sunny") == true)
+    }
+
+    @Test func elidesSniffedBinaryWhenContentTypeMissing() {
+        // Content-Type なし + 置換文字（U+FFFD）混じり = バイナリを誤ってテキスト化したもの
+        let mojibake = "PNG\u{FFFD}\u{FFFD}\u{FFFD}data"
+        let redacted = NetworkLogSanitizer.redactBody(mojibake, contentType: nil, contentLength: "12345")
+        #expect(redacted?.contains("elided") == true)
+        #expect(redacted?.contains("\u{FFFD}") == false)
+    }
+
+    @Test func keepsPlainTextWhenContentTypeMissing() {
+        let redacted = NetworkLogSanitizer.redactBody("plain text body", contentType: nil, contentLength: nil)
+        #expect(redacted == "plain text body")
+    }
+}

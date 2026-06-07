@@ -11,9 +11,12 @@ public struct StdioMCPServer {
         name: String = "ios-recorder",
         version: String = "0.1.0",
         status: (any ReceiverStatusProviding)? = nil,
-        control: (any ReceiverControlling)? = nil
+        control: (any ReceiverControlling)? = nil,
+        storage: (any StorageReporting)? = nil
     ) {
-        self.handler = MCPRequestHandler(store: store, name: name, version: version, status: status, control: control)
+        self.handler = MCPRequestHandler(
+            store: store, name: name, version: version,
+            status: status, control: control, storage: storage)
     }
 
     public func run() async {

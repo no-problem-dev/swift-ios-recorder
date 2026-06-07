@@ -112,9 +112,9 @@ case "serve":
 
 case "mcp":
     // Claude Code が spawn する MCP プロセスに受信機を同居させる。
-    // hub を connection_status / restart_receiver のポートとして渡す。
+    // hub を connection_status / restart_receiver、store を get_storage_info のポートとして渡す。
     await hub.startReceiving()
-    await StdioMCPServer(store: store, status: hub, control: hub).run()
+    await StdioMCPServer(store: store, status: hub, control: hub, storage: store).run()
 
 default:
     print(usage)

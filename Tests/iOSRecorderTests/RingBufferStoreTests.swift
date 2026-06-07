@@ -58,3 +58,42 @@ import iOSRecorderTestSupport
         #expect(limited.last?.id == RecordID(rawValue: "r3"))
     }
 }
+
+@Suite struct RingBufferStoreByteCapacityTests {
+    private func record(_ id: String, bytes: Int, at second: TimeInterval) -> Record {
+        RecordFixtures.make(
+            id: RecordID(rawValue: id),
+            recordedAt: Date(timeIntervalSince1970: second),
+            artifacts: [Artifact(kind: .state, mediaType: "application/octet-stream", data: Data(count: bytes))]
+        )
+    }
+
+    @Test func evictsOldestWhenBytesExceedCapacity() async throws {
+        let store = RingBufferStore(capacity: 100, capacityBytes: 250)
+        try await store.save(record("a", bytes: 100, at: 1))
+        try await store.save(record("b", bytes: 100, at: 2))
+        try await store.save(record("c", bytes: 100, at: 3))   // 300 > 250 → a を退避
+
+        let all = try await store.query(RecordQuery())
+        #expect(all.map(\.id.rawValue) == ["c", "b"])
+        await #expect(throws: RecordStoreError.self) {
+            _ = try await store.fetch(RecordID(rawValue: "a"))
+        }
+    }
+
+    @Test func keepsNewestRecordEvenIfAloneOverBudget() async throws {
+        let store = RingBufferStore(capacity: 100, capacityBytes: 50)
+        try await store.save(record("big", bytes: 500, at: 1))
+        let fetched = try await store.fetch(RecordID(rawValue: "big"))
+        #expect(fetched.id.rawValue == "big")
+    }
+
+    @Test func resavingSameIDDoesNotDoubleCountBytes() async throws {
+        let store = RingBufferStore(capacity: 100, capacityBytes: 250)
+        try await store.save(record("a", bytes: 100, at: 1))
+        try await store.save(record("a", bytes: 100, at: 1))   // 上書き = 100 bytes のまま
+        try await store.save(record("b", bytes: 100, at: 2))   // 合計 200 ≤ 250 → 退避なし
+        let all = try await store.query(RecordQuery())
+        #expect(all.count == 2)
+    }
+}

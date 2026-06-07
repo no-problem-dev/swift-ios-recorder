@@ -86,7 +86,13 @@ public final class BonjourReceiver: @unchecked Sendable {
         connection.receive(minimumIncompleteLength: 4, maximumLength: 4) { [weak self] header, _, isComplete, error in
             guard let self else { return }
             if let header, header.count == 4 {
-                self.receivePayload(length: Framing.readLength(header), on: connection)
+                let length = Framing.readLength(header)
+                guard Framing.isAcceptableLength(length) else {
+                    // 上限超の長さプレフィックス = 壊れたデータか悪意あるピア。即切断。
+                    connection.cancel()
+                    return
+                }
+                self.receivePayload(length: length, on: connection)
             } else if isComplete || error != nil {
                 connection.cancel()
             }
@@ -94,7 +100,6 @@ public final class BonjourReceiver: @unchecked Sendable {
     }
 
     private func receivePayload(length: Int, on connection: NWConnection) {
-        guard length > 0 else { receiveFrame(on: connection); return }
         connection.receive(minimumIncompleteLength: length, maximumLength: length) { [weak self] payload, _, isComplete, error in
             guard let self else { return }
             if let payload, let record = try? self.codec.decode(payload) {

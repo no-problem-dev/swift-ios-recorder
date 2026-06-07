@@ -104,8 +104,15 @@ push やブロッキングは使わない。Claude が必要な時に取りに�
 14. **M13 ✅** 任意データの構造表示＋メトリクス可視化：詳細ビューが payload を `swift-structured-data` の `StructuredValue` に解析して再帰的に折り畳み表示（型別色分け・選択コピー）。`DebugEvent` に `encoding:`/`text:` イニシャライザ追加で「全データ」を保持。汎用メトリクス可視化フレームワーク（`MetricUnit`/`MetricItem`/`MetricSeries`/`MetricsReport`/`MetricsStore` + `MetricsDashboardView`）= Swift Charts・通貨切替(USD/JPY)・倍率(×1/10/100/1000)・色分け。ドメイン（LLM コスト/トークン）は利用側が `MetricsReport` を組んで差し込む（recorder は非依存）
 13. **M12 ✅** デバッグ計測システム：`DebugEvent`（時刻付き正規化封筒）/ `DebugLog`(@Observable ライブバッファ) / `DebugProbe`(生産者) / `DebugInterpreter`+`DebugReport`(オンデバイス解釈) / `MetricExtractor`+`DebugMetric`（`CountMetricExtractor`/`SpanMetricExtractor`）。`DebugLogSource`/`MetricsSource` で capture 時に `debug_timeline`/`metrics` artifact へ畳む。`iOSRecorderUI` に汎用 `DebugTimelineView`（カテゴリ別ライブ表示）。ドメイン知識は core に入れず、消費者（デモ StudioFeature）が probe を実装して AI 動作・A2UI 生成イベントを emit する
 12. **M11 ✅** 自動回復：(1) URL クエリの機密キー（`?key=` 等）マスク、(2) `ReceiverHub` の listener 自己修復（世代カウンタで失敗検知→自動 re-spin）、(3) MCP `tools/call` 直前の条件付き自動回復（`listening==false` 時のみ無言で貼り直し）、(4) iPhone outbox の定期自動ドレイン（pending あり＋到達可能で数秒間隔・接続回復で自動再送）。通常運用で `restart_receiver` の手動実行は不要
+15. **M14 ✅** 書き込み側のサイズ根治＋防御強化（2026-06 監査の包括対応）：
+    - **ScreenshotSource を縮小 JPEG 化**（maxDimension 1024 / quality 0.8、`Artifact.screenshot(jpegData:)`）。フル解像度 PNG（1 枚 5MB 超）がディスク・転送・メモリの支配的コストだった。MCP が AI に渡す画像は元々同上限なので情報損失ゼロ。drawHierarchy のみ MainActor、エンコードは外（撮影時の UI フリーズ解消）
+    - **DebugLogSource が capture 時に payload を 8KB/event で truncate**（`DebugEvent.withPayloadLimited`、UTF-8 境界保持、元サイズは `payloadOriginalBytes` に残る）。「読み出し側の責務」だけでは保存側が肥大したままだった（53KB prompt → base64 71KB がディスク残留）
+    - **Framing にフレーム長上限 64MB**。受信側は上限超の長さプレフィックスで即切断（悪意/破損ピアによる巨大メモリ確保の防止）、送信側は `ExporterError.payloadTooLarge` を投げ、outbox はそれを退避せず／drain で破棄（先頭詰まり防止）
+    - **RingBufferStore に capacityBytes（既定 64MB）**。件数だけでなくバイト数でも退避（最新 1 件は予算超過でも保持）
+    - **Sanitizer 強化**: 機密キー判定を完全一致 Set から部分一致（`client_secret`/`oauth_signature`/`X-Auth-Token` 等を捕捉）へ、テキスト JSON body 内の機密キー文字列値をマスク（request/response 両方）、Content-Type 不明でも U+FFFD 痕跡があればバイナリとして省略
+    - **MCP**: `get_storage_info`（件数/総バイト/時間範囲/保存先）追加、`search_events` が `{hits, scannedCaptures, scanTruncated}` を返し走査打ち切りを黙らせない、`RecordMCPServer.maxScannedCaptures` 設定化、`FileRecordStore` に root mtime キーの meta キャッシュ + `StorageReporting` 準拠
 
-検証: macOS で 48 tests / 13 suites 緑、iOS 専用ターゲットは xcodebuild（generic/iOS）でコンパイル確認済み、
+検証: macOS で 153 tests / 38 suites 緑、iOS 専用ターゲットは xcodebuild（generic/iOS）でコンパイル確認済み、
 MCP は実バイナリに JSON-RPC を流して動作確認済み。
 
 ### 残（実運用フェーズ）

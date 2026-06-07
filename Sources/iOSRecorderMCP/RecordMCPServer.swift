@@ -20,14 +20,24 @@ public struct DebugEventHit: Sendable {
     public let event: DebugEvent
 }
 
+/// 検索結果と走査の事実。打ち切りを黙らせない（見つからない ≠ 存在しない、を AI に伝える）。
+public struct DebugEventSearchResult: Sendable {
+    public let hits: [DebugEventHit]
+    /// 実際に走査した capture 数。
+    public let scannedCaptures: Int
+    /// 走査上限で打ち切られ、未走査の capture が残っているか。
+    public let scanTruncated: Bool
+}
+
 /// RecordStore を MCP ツール群に橋渡しするドメイン層。
 public actor RecordMCPServer {
     private let store: any RecordStore
     /// captureID 未指定の検索で走査する capture 数の上限。
-    private let maxScannedCaptures = 50
+    private let maxScannedCaptures: Int
 
-    public init(store: any RecordStore) {
+    public init(store: any RecordStore, maxScannedCaptures: Int = 50) {
         self.store = store
+        self.maxScannedCaptures = max(1, maxScannedCaptures)
     }
 
     public func listCaptures(_ query: RecordQuery = RecordQuery()) async throws -> [RecordSummary] {
@@ -47,8 +57,9 @@ public actor RecordMCPServer {
     }
 
     /// capture 横断（新しい順）でデバッグイベントを検索する。
-    public func searchEvents(_ query: DebugEventQuery) async throws -> [DebugEventHit] {
+    public func searchEvents(_ query: DebugEventQuery) async throws -> DebugEventSearchResult {
         let records: [Record]
+        var scanTruncated = false
         if let captureID = query.captureID {
             records = [try await store.fetch(captureID)]
         } else {
@@ -56,6 +67,7 @@ public actor RecordMCPServer {
             recordQuery.kinds = [.debugTimeline]
             if let since = query.since { recordQuery.timeRange = since ... .distantFuture }
             let summaries = try await store.query(recordQuery)
+            scanTruncated = summaries.count > maxScannedCaptures
             var fetched: [Record] = []
             for summary in summaries.prefix(maxScannedCaptures) {
                 if let record = try? await store.fetch(summary.id) { fetched.append(record) }
@@ -67,10 +79,12 @@ public actor RecordMCPServer {
         for record in records {
             for event in Self.timelineEvents(in: record) where Self.matches(event, query) {
                 hits.append(DebugEventHit(captureID: record.id, event: event))
-                if hits.count >= query.limit { return hits }
+                if hits.count >= query.limit {
+                    return DebugEventSearchResult(hits: hits, scannedCaptures: records.count, scanTruncated: scanTruncated)
+                }
             }
         }
-        return hits
+        return DebugEventSearchResult(hits: hits, scannedCaptures: records.count, scanTruncated: scanTruncated)
     }
 
     /// 指定 capture 内のイベントを payload 込みで 1 件返す。

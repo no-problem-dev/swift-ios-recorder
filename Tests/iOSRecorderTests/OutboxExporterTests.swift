@@ -46,3 +46,43 @@ import iOSRecorderTestSupport
         #expect(exporter.label == "bonjour")
     }
 }
+
+/// 恒久的に送れない（大きすぎる）記録が outbox の先頭詰まりを起こさないこと。
+private actor SizeRejectingExporter: Exporter {
+    public private(set) var exported: [Record] = []
+    nonisolated let label = "SizeRejecting"
+    func export(_ record: Record) async throws {
+        if record.id.rawValue.hasPrefix("big") {
+            throw ExporterError.payloadTooLarge(bytes: 999_999_999)
+        }
+        exported.append(record)
+    }
+    func exportedCount() -> Int { exported.count }
+}
+
+@Suite struct OutboxPayloadTooLargeTests {
+    @Test func tooLargeRecordIsNotPersistedToOutbox() async throws {
+        let exporter = OutboxExporter(wrapping: SizeRejectingExporter(), outbox: FakeRecordStore())
+        await #expect(throws: ExporterError.self) {
+            try await exporter.export(RecordFixtures.make(id: RecordID(rawValue: "big1")))
+        }
+        #expect(await exporter.pendingCount() == 0)   // 再送不能なものは退避しない
+    }
+
+    @Test func drainDropsTooLargeAndContinues() async throws {
+        let inner = SizeRejectingExporter()
+        let outbox = FakeRecordStore()
+        // 過去に退避済みの「大きすぎる」記録が先頭にある状況を再現
+        try await outbox.save(RecordFixtures.make(
+            id: RecordID(rawValue: "big-legacy"), recordedAt: Date(timeIntervalSince1970: 1)))
+        try await outbox.save(RecordFixtures.make(
+            id: RecordID(rawValue: "ok1"), recordedAt: Date(timeIntervalSince1970: 2)))
+
+        let exporter = OutboxExporter(wrapping: inner, outbox: outbox)
+        let sent = await exporter.drain()
+
+        #expect(sent == 1)                              // ok1 は送れた
+        #expect(await inner.exportedCount() == 1)
+        #expect(await exporter.pendingCount() == 0)     // big-legacy は破棄され詰まらない
+    }
+}

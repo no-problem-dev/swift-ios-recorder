@@ -42,6 +42,9 @@ public extension Artifact {
     static func screenshot(pngData: Data, attributes: [String: String] = [:]) -> Artifact {
         Artifact(kind: .screenshot, mediaType: "image/png", data: pngData, attributes: attributes)
     }
+    static func screenshot(jpegData: Data, attributes: [String: String] = [:]) -> Artifact {
+        Artifact(kind: .screenshot, mediaType: "image/jpeg", data: jpegData, attributes: attributes)
+    }
     static func state(json: Data, attributes: [String: String] = [:]) -> Artifact {
         Artifact(kind: .state, mediaType: "application/json", data: json, attributes: attributes)
     }

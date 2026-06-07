@@ -116,3 +116,56 @@ import iOSRecorderTestSupport
         #expect(result.first?.id == RecordID(rawValue: "new"))
     }
 }
+
+@Suite struct FileRecordStoreStorageInfoTests {
+    private func makeRoot() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("iosrecorder-tests-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    @Test func reportsCountsBytesAndTimeRange() async throws {
+        let store = FileRecordStore(rootURL: makeRoot())
+        try await store.save(RecordFixtures.make(
+            id: RecordID(rawValue: "old"), recordedAt: Date(timeIntervalSince1970: 100),
+            artifacts: [.log(text: String(repeating: "a", count: 1000))]))
+        try await store.save(RecordFixtures.make(
+            id: RecordID(rawValue: "new"), recordedAt: Date(timeIntervalSince1970: 200),
+            artifacts: [.log(text: String(repeating: "b", count: 2000))]))
+
+        let info = await store.storageInfo()
+        #expect(info.totalRecords == 2)
+        #expect(info.totalBytes >= 3000)   // artifact 本体 + meta.json
+        #expect(info.oldestRecordedAt == Date(timeIntervalSince1970: 100))
+        #expect(info.newestRecordedAt == Date(timeIntervalSince1970: 200))
+    }
+
+    @Test func emptyStoreReportsZeros() async {
+        let info = await FileRecordStore(rootURL: makeRoot()).storageInfo()
+        #expect(info.totalRecords == 0)
+        #expect(info.totalBytes == 0)
+        #expect(info.oldestRecordedAt == nil)
+    }
+}
+
+@Suite struct FileRecordStoreCacheTests {
+    private func makeRoot() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("iosrecorder-tests-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    @Test func repeatedQueriesStayConsistentAcrossMutations() async throws {
+        let store = FileRecordStore(rootURL: makeRoot())
+        try await store.save(RecordFixtures.make(id: RecordID(rawValue: "a")))
+        #expect(try await store.query(RecordQuery()).count == 1)
+        #expect(try await store.query(RecordQuery()).count == 1)   // キャッシュ経由でも同じ
+
+        try await store.save(RecordFixtures.make(id: RecordID(rawValue: "b")))
+        #expect(try await store.query(RecordQuery()).count == 2)   // save 後に反映
+
+        try await store.delete(RecordID(rawValue: "a"))
+        #expect(try await store.query(RecordQuery()).map(\.id.rawValue) == ["b"])   // delete 後に反映
+
+        try await store.removeAll()
+        #expect(try await store.query(RecordQuery()).isEmpty)
+    }
+}

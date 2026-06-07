@@ -45,3 +45,12 @@ import iOSRecorderTestSupport
         #expect(summary.artifactKinds == [.screenshot, .log])
     }
 }
+
+@Suite struct JPEGArtifactTests {
+    @Test func jpegScreenshotFactorySetsMediaType() {
+        let artifact = Artifact.screenshot(jpegData: Data([0xFF, 0xD8]), attributes: ["width": "100"])
+        #expect(artifact.kind == .screenshot)
+        #expect(artifact.mediaType == "image/jpeg")
+        #expect(artifact.attributes["width"] == "100")
+    }
+}

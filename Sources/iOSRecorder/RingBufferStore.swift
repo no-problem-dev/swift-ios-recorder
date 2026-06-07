@@ -1,21 +1,35 @@
 import Foundation
 
-/// オンデバイスの保持実装。容量を超えたら最古を退避する固定長バッファ。
+/// オンデバイスの保持実装。件数とバイト数の両方で容量を制御し、超えたら最古を退避する。
 public actor RingBufferStore: RecordStore {
     private var storage: [RecordID: Record] = [:]
     private var order: [RecordID] = []
+    private var totalBytes = 0
     private let capacity: Int
+    private let capacityBytes: Int
 
-    public init(capacity: Int = 100) {
+    /// - Parameters:
+    ///   - capacity: 保持する最大件数。
+    ///   - capacityBytes: artifact data 合計の上限。screenshot 等の不均等な肥大でも
+    ///     メモリを食い潰さないための歯止め。最新 1 件は予算超過でも保持する。
+    public init(capacity: Int = 100, capacityBytes: Int = 64_000_000) {
         self.capacity = max(1, capacity)
+        self.capacityBytes = max(1, capacityBytes)
     }
 
     public func save(_ record: Record) async throws {
-        if storage[record.id] == nil { order.append(record.id) }
+        if let existing = storage[record.id] {
+            totalBytes -= Self.byteSize(of: existing)
+        } else {
+            order.append(record.id)
+        }
         storage[record.id] = record
-        while order.count > capacity {
+        totalBytes += Self.byteSize(of: record)
+        while order.count > 1, order.count > capacity || totalBytes > capacityBytes {
             let evicted = order.removeFirst()
-            storage[evicted] = nil
+            if let old = storage.removeValue(forKey: evicted) {
+                totalBytes -= Self.byteSize(of: old)
+            }
         }
     }
 
@@ -34,12 +48,19 @@ public actor RingBufferStore: RecordStore {
     }
 
     public func delete(_ id: RecordID) async throws {
-        storage[id] = nil
+        if let removed = storage.removeValue(forKey: id) {
+            totalBytes -= Self.byteSize(of: removed)
+        }
         order.removeAll { $0 == id }
     }
 
     public func removeAll() async throws {
         storage.removeAll()
         order.removeAll()
+        totalBytes = 0
+    }
+
+    static func byteSize(of record: Record) -> Int {
+        record.artifacts.reduce(0) { $0 + $1.data.count }
     }
 }

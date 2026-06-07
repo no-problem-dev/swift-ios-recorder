@@ -13,14 +13,17 @@ public protocol OutboxDraining: Sendable {
 public actor OutboxExporter: Exporter, OutboxDraining {
     private let inner: any Exporter
     private let outbox: any RecordStore
+    private let scanLimit: Int
     public nonisolated let label: String
 
     /// - Parameters:
     ///   - inner: 実際に送る Exporter（例: BonjourExporter）。
     ///   - outbox: 未送分の退避先（例: iOS 上の FileRecordStore）。
-    public init(wrapping inner: any Exporter, outbox: any RecordStore) {
+    ///   - scanLimit: drain / pendingCount が一度に走査する上限件数。
+    public init(wrapping inner: any Exporter, outbox: any RecordStore, scanLimit: Int = 10_000) {
         self.inner = inner
         self.outbox = outbox
+        self.scanLimit = max(1, scanLimit)
         self.label = inner.label
     }
 
@@ -28,6 +31,9 @@ public actor OutboxExporter: Exporter, OutboxDraining {
         do {
             try await inner.export(record)
             try? await outbox.delete(record.id)   // 成功したら退避分も掃除
+        } catch ExporterError.payloadTooLarge(let bytes) {
+            // 再試行しても永遠に送れないものは退避しない（outbox の先頭詰まり防止）。
+            throw ExporterError.payloadTooLarge(bytes: bytes)
         } catch {
             try? await outbox.save(record)         // 失敗は退避し、再送に委ねる
             throw error
@@ -35,10 +41,11 @@ public actor OutboxExporter: Exporter, OutboxDraining {
     }
 
     /// 退避済みを古い順に再送する。到達回復時・起動時に呼ぶ。送れた件数を返す。
-    /// 1 件でも失敗したら以降は次の機会に回す（順序と無駄打ちの抑制）。
+    /// 一時的な失敗なら以降は次の機会に回す（順序と無駄打ちの抑制）。
+    /// 恒久的に送れないもの（payloadTooLarge）は破棄して次へ進む。
     @discardableResult
     public func drain() async -> Int {
-        let summaries = ((try? await outbox.query(RecordQuery(limit: 1000))) ?? [])
+        let summaries = ((try? await outbox.query(RecordQuery(limit: scanLimit))) ?? [])
             .sorted { $0.recordedAt < $1.recordedAt }
         var sent = 0
         for summary in summaries {
@@ -47,6 +54,8 @@ public actor OutboxExporter: Exporter, OutboxDraining {
                 try await inner.export(record)
                 try? await outbox.delete(record.id)
                 sent += 1
+            } catch ExporterError.payloadTooLarge {
+                try? await outbox.delete(record.id)
             } catch {
                 break
             }
@@ -56,6 +65,6 @@ public actor OutboxExporter: Exporter, OutboxDraining {
 
     /// 未送（退避中）の件数。
     public func pendingCount() async -> Int {
-        ((try? await outbox.query(RecordQuery(limit: 1000))) ?? []).count
+        ((try? await outbox.query(RecordQuery(limit: scanLimit))) ?? []).count
     }
 }

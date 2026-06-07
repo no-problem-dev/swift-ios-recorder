@@ -47,6 +47,29 @@ public extension DebugEvent {
         )
     }
 
+    /// payload を maxBytes に収めた複製。超過分は UTF-8 境界を保って切り、
+    /// 元のバイト数を `attributes["payloadOriginalBytes"]` に刻む。
+    /// 外れ値（巨大 prompt 等）だけが対象になり、典型イベントは素通りする。
+    func withPayloadLimited(to maxBytes: Int) -> DebugEvent {
+        guard let payload, payload.count > maxBytes else { return self }
+        // テキスト payload なら UTF-8 境界（最大 3 バイト戻し）を保って切る。バイナリならそのまま切る。
+        var truncated = payload.prefix(maxBytes)
+        for back in 0..<4 where maxBytes - back >= 0 {
+            let candidate = payload.prefix(maxBytes - back)
+            if String(data: candidate, encoding: .utf8) != nil {
+                truncated = candidate
+                break
+            }
+        }
+        var attrs = attributes
+        attrs["payloadTruncated"] = "true"
+        attrs["payloadOriginalBytes"] = "\(payload.count)"
+        return DebugEvent(
+            id: id, at: at, category: category, name: name,
+            summary: summary, attributes: attrs, payload: Data(truncated)
+        )
+    }
+
     /// 任意の Encodable 値を payload に詰める。利用側が差し込んだどんな構造体でも
     /// 「全データ」を JSON として保持し、詳細ビューで構造表示できる。
     init(
