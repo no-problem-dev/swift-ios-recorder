@@ -111,6 +111,7 @@ push やブロッキングは使わない。Claude が必要な時に取りに�
     - **RingBufferStore に capacityBytes（既定 64MB）**。件数だけでなくバイト数でも退避（最新 1 件は予算超過でも保持）
     - **Sanitizer 強化**: 機密キー判定を完全一致 Set から部分一致（`client_secret`/`oauth_signature`/`X-Auth-Token` 等を捕捉）へ、テキスト JSON body 内の機密キー文字列値をマスク（request/response 両方）、Content-Type 不明でも U+FFFD 痕跡があればバイナリとして省略
     - **MCP**: `get_storage_info`（件数/総バイト/時間範囲/保存先）追加、`search_events` が `{hits, scannedCaptures, scanTruncated}` を返し走査打ち切りを黙らせない、`RecordMCPServer.maxScannedCaptures` 設定化、`FileRecordStore` に root mtime キーの meta キャッシュ + `StorageReporting` 準拠
+16. **M15 ✅** デバッグ UI のコンパクト表示（`CompactDisplay` ポリシー）：既定はコンパクト・展開はオンデマンド。構造ツリーはトップレベルのみ展開＋大量の子はバッチ開示（30 件→+100）、長い文字列リーフ/生テキストはプレビュー + 全文展開（`ExpandableText`）、タイムライン行とデータ見出しに payload サイズバッジ、capture 時 truncate の注記（`payloadOriginalBytes` 表示）、スクショは maxHeight 360
 
 検証: macOS で 153 tests / 38 suites 緑、iOS 専用ターゲットは xcodebuild（generic/iOS）でコンパイル確認済み、
 MCP は実バイナリに JSON-RPC を流して動作確認済み。

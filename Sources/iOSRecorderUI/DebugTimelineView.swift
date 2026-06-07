@@ -94,8 +94,10 @@ private struct EventRow: View {
                         .typography(.labelSmall).foregroundStyle(palette.outline)
                 }
                 Spacer(minLength: 4)
-                if event.payload != nil {
-                    Image(systemName: "doc.text.magnifyingglass").font(.caption2).foregroundStyle(palette.primary)
+                if let payload = event.payload {
+                    Label(CompactDisplay.formatBytes(payload.count), systemImage: "doc.text")
+                        .font(.caption2).foregroundStyle(palette.primary)
+                        .labelStyle(.titleAndIcon)
                 }
                 Image(systemName: "chevron.right").font(.caption2.bold()).foregroundStyle(palette.outline)
             }
@@ -138,7 +140,8 @@ struct DebugEventDetailView: View {
                             ForEach(event.attributes.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(key).typography(.labelSmall).foregroundStyle(palette.onSurfaceVariant)
-                                    Text(value).font(.footnote.monospaced()).foregroundStyle(palette.onSurface).textSelection(.enabled)
+                                    Text(value).font(.footnote.monospaced()).foregroundStyle(palette.onSurface)
+                                        .lineLimit(4).textSelection(.enabled)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
@@ -147,14 +150,18 @@ struct DebugEventDetailView: View {
                 }
 
                 if let payload = event.payload, !payload.isEmpty {
-                    labeled(event.attributes["payloadType"].map { "データ（\($0)）" } ?? "データ") {
-                        if let structured = StructuredValueView.parse(payload) {
-                            StructuredValueView(value: structured)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            Text(String(decoding: payload, as: UTF8.self))
-                                .font(.footnote.monospaced()).foregroundStyle(palette.onSurface).textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                    labeled(payloadTitle) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if let note = truncationNote {
+                                Label(note, systemImage: "scissors")
+                                    .typography(.labelSmall).foregroundStyle(palette.onSurfaceVariant)
+                            }
+                            if let structured = StructuredValueView.parse(payload) {
+                                StructuredValueView(value: structured)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            } else {
+                                ExpandableText(text: String(decoding: payload, as: UTF8.self))
+                            }
                         }
                     }
                 }
@@ -167,6 +174,19 @@ struct DebugEventDetailView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+    }
+
+    private var payloadTitle: String {
+        let type = event.attributes["payloadType"].map { "（\($0)）" } ?? ""
+        let size = event.payload.map { " · \(CompactDisplay.formatBytes($0.count))" } ?? ""
+        return "データ\(type)\(size)"
+    }
+
+    /// capture 時に payload が truncate されていたら、その事実を表示する。
+    private var truncationNote: String? {
+        guard event.attributes["payloadTruncated"] == "true",
+              let original = event.attributes["payloadOriginalBytes"].flatMap(Int.init) else { return nil }
+        return "撮影時に \(CompactDisplay.formatBytes(original)) から切り詰め済み"
     }
 
     @ViewBuilder

@@ -23,6 +23,8 @@ struct CaptureDetailView: View {
                         image
                             .resizable()
                             .scaledToFit()
+                            .frame(maxHeight: 360)
+                            .frame(maxWidth: .infinity)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .overlay {
                                 RoundedRectangle(cornerRadius: 12).stroke(palette.outlineVariant, lineWidth: 1)
@@ -70,10 +72,7 @@ struct CaptureDetailView: View {
            let structured = StructuredValueView.parse(artifact.data) {
             StructuredValueView(value: structured)
         } else {
-            Text(String(decoding: artifact.data, as: UTF8.self))
-                .font(.system(.footnote, design: .monospaced))
-                .foregroundStyle(palette.onSurface)
-                .textSelection(.enabled)
+            ExpandableText(text: String(decoding: artifact.data, as: UTF8.self))
         }
     }
 
