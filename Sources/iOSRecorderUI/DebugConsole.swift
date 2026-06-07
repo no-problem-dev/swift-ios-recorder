@@ -1,4 +1,5 @@
 import SwiftUI
+import DesignSystem
 import iOSRecorder
 import iOSRecorderNetwork
 
@@ -37,6 +38,10 @@ public struct DebugSection: Identifiable {
         case items([DebugItem])
         case statGrid(columns: Int, stats: [DebugStat])
         case custom(AnyView)
+        /// 手元データの掃除・再送（ライブ件数付きの操作セット）。
+        case maintenance(DebugLog?, NetworkLogStore?, (any OutboxDraining)?)
+        /// 任意画面への動線カード（デザインカタログ等）。
+        case screen(AnyView, tint: Color)
     }
 
     init(id: String, title: String?, icon: String?, layout: Layout, content: Content, preview: [DebugPreviewElement] = []) {
@@ -154,6 +159,38 @@ public extension DebugSection {
     /// 任意の利用側ビューを差し込む脱出口。
     static func custom<Content: View>(id: String, title: String? = nil, icon: String? = nil, layout: Layout = .card, @ViewBuilder content: () -> Content) -> DebugSection {
         DebugSection(id: id, title: title, icon: icon, layout: layout, content: .custom(AnyView(content())))
+    }
+
+    /// 手元データの掃除・再送。渡したストアに応じて操作が並ぶ（ライブ件数付き）:
+    /// イベントログ消去 / 通信ログ消去 / 記録の全削除 / 未送信の再送・破棄 / すべて消去。
+    static func maintenance(
+        id: String = "maintenance",
+        title: String = "メンテナンス",
+        log: DebugLog? = nil,
+        network: NetworkLogStore? = nil,
+        outbox: (any OutboxDraining)? = nil
+    ) -> DebugSection {
+        DebugSection(id: id, title: title, icon: "trash", layout: .card,
+                     content: .maintenance(log, network, outbox))
+    }
+
+    /// 任意画面への動線カード。デバッグメニューから開発ツール（カタログ等）へ飛ばす汎用口。
+    static func screen<Destination: View>(
+        id: String,
+        title: String,
+        icon: String = "arrow.up.right.square",
+        tint: Color = .indigo,
+        @ViewBuilder destination: () -> Destination
+    ) -> DebugSection {
+        DebugSection(id: id, title: title, icon: icon, layout: .navigationLink,
+                     content: .screen(AnyView(destination()), tint: tint))
+    }
+
+    /// デザインシステムのコンポーネントカタログへの動線。
+    static func designSystemCatalog(id: String = "design-catalog", title: String = "デザインカタログ") -> DebugSection {
+        screen(id: id, title: title, icon: "paintpalette", tint: .pink) {
+            DesignSystemCatalogView()
+        }
     }
 }
 

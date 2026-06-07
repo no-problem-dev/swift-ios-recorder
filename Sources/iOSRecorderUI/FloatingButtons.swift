@@ -18,22 +18,29 @@ struct FloatingButtons: View {
             let center = clusterCenter(in: geo.size)
             // 観測を body の追跡スコープ直下で行い、撮影後のバッジ更新を確実にする
             let badgeCount = controller.summaries.count
-            cluster(badgeCount: badgeCount)
-                .background(regionReporter)
-                .position(
-                    x: center.x + committedOffset.width + dragOffset.width,
-                    y: center.y + committedOffset.height + dragOffset.height
-                )
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 8)
-                        .updating($dragOffset) { value, state, _ in state = value.translation }
-                        .onEnded { value in
-                            committedOffset.width += value.translation.width
-                            committedOffset.height += value.translation.height
-                        }
-                )
+            if controller.isOverlayVisible {
+                cluster(badgeCount: badgeCount)
+                    .background(regionReporter)
+                    .position(
+                        x: center.x + committedOffset.width + dragOffset.width,
+                        y: center.y + committedOffset.height + dragOffset.height
+                    )
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 8)
+                            .updating($dragOffset) { value, state, _ in state = value.translation }
+                            .onEnded { value in
+                                committedOffset.width += value.translation.width
+                                committedOffset.height += value.translation.height
+                            }
+                    )
+                    .transition(.scale(scale: 0.6, anchor: .bottomTrailing).combined(with: .opacity))
+            }
         }
         .ignoresSafeArea()
+        .onChange(of: controller.isOverlayVisible) { _, visible in
+            // 非表示中は透明ウィンドウがタッチを奪わないよう、当たり判定を消す。
+            if !visible { hitRegion?.frame = .zero }
+        }
         .sheet(isPresented: $controller.isPresentingPanel) {
             DebugPanel(controller: controller)
         }

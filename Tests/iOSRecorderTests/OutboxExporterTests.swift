@@ -86,3 +86,24 @@ private actor SizeRejectingExporter: Exporter {
         #expect(await exporter.pendingCount() == 0)     // big-legacy は破棄され詰まらない
     }
 }
+
+@Suite struct OutboxDiscardTests {
+    @Test func discardAllEmptiesPendingAndReturnsCount() async throws {
+        let flaky = FlakyExporter(online: false)
+        let exporter = OutboxExporter(wrapping: flaky, outbox: FakeRecordStore())
+        for raw in ["r1", "r2", "r3"] {
+            try? await exporter.export(RecordFixtures.make(id: RecordID(rawValue: raw)))
+        }
+        #expect(await exporter.pendingCount() == 3)
+
+        let discarded = await exporter.discardAll()
+        #expect(discarded == 3)
+        #expect(await exporter.pendingCount() == 0)
+        #expect(await flaky.exportedCount() == 0)   // 送らずに破棄
+    }
+
+    @Test func discardAllOnEmptyOutboxReturnsZero() async {
+        let exporter = OutboxExporter(wrapping: FakeExporter(), outbox: FakeRecordStore())
+        #expect(await exporter.discardAll() == 0)
+    }
+}

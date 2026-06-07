@@ -112,6 +112,10 @@ push やブロッキングは使わない。Claude が必要な時に取りに�
     - **Sanitizer 強化**: 機密キー判定を完全一致 Set から部分一致（`client_secret`/`oauth_signature`/`X-Auth-Token` 等を捕捉）へ、テキスト JSON body 内の機密キー文字列値をマスク（request/response 両方）、Content-Type 不明でも U+FFFD 痕跡があればバイナリとして省略
     - **MCP**: `get_storage_info`（件数/総バイト/時間範囲/保存先）追加、`search_events` が `{hits, scannedCaptures, scanTruncated}` を返し走査打ち切りを黙らせない、`RecordMCPServer.maxScannedCaptures` 設定化、`FileRecordStore` に root mtime キーの meta キャッシュ + `StorageReporting` 準拠
 16. **M15 ✅** デバッグ UI のコンパクト表示（`CompactDisplay` ポリシー）：既定はコンパクト・展開はオンデマンド。構造ツリーはトップレベルのみ展開＋大量の子はバッチ開示（30 件→+100）、長い文字列リーフ/生テキストはプレビュー + 全文展開（`ExpandableText`）、タイムライン行とデータ見出しに payload サイズバッジ、capture 時 truncate の注記（`payloadOriginalBytes` 表示）、スクショは maxHeight 360
+17. **M16 ✅** 操作系の整備とシェイクトグル：
+    - **シェイク = フロートボタンの表示トグル**（既定は非表示。シェイクで出現、再シェイクで消える。撮影は 📷 タップのみ）。非表示中は overlay ウィンドウの当たり判定をゼロ化し本体タッチを一切妨げない。シェイクの無い macOS は常時表示
+    - **`DebugSection.maintenance`**: 手元データの掃除・再送をライブ件数付きで一括提供（イベントログ消去 / 通信ログ消去 / 記録の全削除 / 未送信の再送・破棄 / すべて消去。空なら無効化）。`OutboxDraining` に `discardAll()` を追加
+    - **`DebugSection.screen` / `designSystemCatalog`**: 任意画面への動線カード。デバッグメニューから `DesignSystemCatalogView`（コンポーネントカタログ）へ飛べる
 
 検証: macOS で 153 tests / 38 suites 緑、iOS 専用ターゲットは xcodebuild（generic/iOS）でコンパイル確認済み、
 MCP は実バイナリに JSON-RPC を流して動作確認済み。

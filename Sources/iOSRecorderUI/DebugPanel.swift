@@ -72,7 +72,101 @@ private struct DebugSectionView: View {
             StatGridCard(title: section.title, columns: columns, stats: stats)
         case let .custom(view):
             CustomCard(title: section.title, view: view)
+        case let .maintenance(log, network, outbox):
+            MaintenanceCard(title: section.title ?? "メンテナンス", controller: controller,
+                            log: log, network: network, outbox: outbox)
+        case let .screen(view, tint):
+            SectionSummaryCard(icon: section.icon ?? "arrow.up.right.square", tint: tint,
+                               title: section.title ?? section.id, preview: section.preview) {
+                view
+            }
         }
+    }
+}
+
+// MARK: - メンテナンス（手元データの掃除・再送）
+
+private struct MaintenanceCard: View {
+    let title: String
+    @Bindable var controller: RecorderController
+    let log: DebugLog?
+    let network: NetworkLogStore?
+    let outbox: (any OutboxDraining)?
+    @Environment(\.colorPalette) private var palette
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title)
+            Card {
+                VStack(spacing: 0) {
+                    if let log {
+                        row("イベントログを消去", icon: "waveform.path.ecg", count: log.events.count) {
+                            log.clear()
+                        }
+                        divider
+                    }
+                    if let network {
+                        row("通信ログを消去", icon: "network", count: network.logs.count) {
+                            network.clear()
+                        }
+                        divider
+                    }
+                    row("端末内の記録を全削除", icon: "photo.stack", count: controller.summaries.count, destructive: true) {
+                        await controller.removeAll()
+                    }
+                    if let outbox {
+                        divider
+                        row("未送信を再送", icon: "paperplane", count: controller.pendingCount) {
+                            await outbox.drain()
+                            await controller.refresh()
+                        }
+                        divider
+                        row("未送信を破棄", icon: "xmark.bin", count: controller.pendingCount, destructive: true) {
+                            await outbox.discardAll()
+                            await controller.refresh()
+                        }
+                    }
+                    divider
+                    row("すべて消去", icon: "trash", destructive: true) {
+                        log?.clear()
+                        network?.clear()
+                        await outbox?.discardAll()
+                        await controller.removeAll()
+                    }
+                }
+            }
+        }
+    }
+
+    private var divider: some View {
+        Divider().overlay(palette.outlineVariant)
+    }
+
+    /// 操作 1 行。ライブ件数を添え、対象が空ならボタンを無効化する。
+    private func row(
+        _ title: String,
+        icon: String,
+        count: Int? = nil,
+        destructive: Bool = false,
+        run: @escaping @MainActor () async -> Void
+    ) -> some View {
+        Button {
+            Task { @MainActor in await run() }
+        } label: {
+            HStack {
+                Label(title, systemImage: icon).typography(.bodyMedium)
+                Spacer()
+                if let count {
+                    Text("\(count)").typography(.labelMedium).monospacedDigit()
+                        .foregroundStyle(palette.onSurfaceVariant)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .foregroundStyle(destructive ? palette.error : palette.primary)
+        .disabled(count == 0)
+        .opacity(count == 0 ? 0.4 : 1)
+        .padding(.vertical, 10)
     }
 }
 

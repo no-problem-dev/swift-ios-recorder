@@ -1,10 +1,13 @@
 import Foundation
 
-/// 未送分を再送・観測できる能力。UI から pending を見せたり drain したりするためのポート。
+/// 未送分を再送・観測・破棄できる能力。UI から pending を見せたり drain したりするためのポート。
 public protocol OutboxDraining: Sendable {
     @discardableResult
     func drain() async -> Int
     func pendingCount() async -> Int
+    /// 未送分を送らずにすべて破棄する。破棄した件数を返す。
+    @discardableResult
+    func discardAll() async -> Int
 }
 
 /// 別の Exporter を包み、送信失敗分を永続ストアに退避して後で再送する合成 Exporter。
@@ -66,5 +69,13 @@ public actor OutboxExporter: Exporter, OutboxDraining {
     /// 未送（退避中）の件数。
     public func pendingCount() async -> Int {
         ((try? await outbox.query(RecordQuery(limit: scanLimit))) ?? []).count
+    }
+
+    /// 未送分を送らずにすべて破棄する。古い送信失敗分が要らなくなった時の掃除用。
+    @discardableResult
+    public func discardAll() async -> Int {
+        let count = await pendingCount()
+        try? await outbox.removeAll()
+        return count
     }
 }

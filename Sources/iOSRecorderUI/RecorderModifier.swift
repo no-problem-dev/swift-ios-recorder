@@ -4,7 +4,7 @@ import iOSRecorder
 
 public extension View {
     /// 計器 UI（フロートボタン + デバッグパネル + シェイク）を載せる。DEBUG 限定で呼ぶ。
-    /// 📷 タップで撮影、🐞 タップでデバッグパネル、シェイクでも撮影。
+    /// ボタンは普段隠れていて、シェイクで表示/非表示をトグル。📷 タップで撮影、🐞 タップでデバッグパネル。
     func recorder(_ controller: RecorderController) -> some View {
         modifier(RecorderModifier(controller: controller))
     }
@@ -15,7 +15,9 @@ struct RecorderModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         placement(content)
-            .onShake { Task { @MainActor in await controller.capture() } }
+            .onShake {
+                withAnimation(.snappy) { controller.isOverlayVisible.toggle() }
+            }
     }
 
     @ViewBuilder

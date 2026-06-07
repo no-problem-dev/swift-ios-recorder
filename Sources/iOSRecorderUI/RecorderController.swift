@@ -32,6 +32,13 @@ public final class RecorderController {
     /// 未送（退避中）件数。
     public private(set) var pendingCount = 0
     public var isPresentingPanel = false
+    /// フロートボタン群（📷 / 🐞）の表示状態。iOS では既定で隠れていて、シェイクでトグルする。
+    /// シェイクの無い macOS では常時表示。
+    #if canImport(UIKit)
+    public var isOverlayVisible = false
+    #else
+    public var isOverlayVisible = true
+    #endif
     public var captureScreenName = ""
     /// 現在表示中の画面名。`.recorderScreen(_:)` が設定し、撮影時に自動付与される。
     public var currentScreen: String?
