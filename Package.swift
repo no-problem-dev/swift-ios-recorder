@@ -22,6 +22,7 @@ let package = Package(
         .executable(name: "ios-recorder", targets: ["ios-recorder"])
     ],
     dependencies: [
+        .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
         // 任意データの構造表示（DebugTimeline 詳細）に使う。モノレポ各所と同じ URL identity。
         .package(url: "https://github.com/no-problem-dev/swift-structured-data.git", from: "1.3.0"),
         // デバッグ UI のデザイントークン/コンポーネント。UI 層（iOSRecorderUI）でのみ使う。
