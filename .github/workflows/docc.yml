@@ -33,7 +33,8 @@ jobs:
         run: |
           swift package --allow-writing-to-directory ./docs \
             generate-documentation \
-            --target iOSRecorder \
+            --enable-experimental-combined-documentation \
+            --target iOSRecorder --target iOSRecorderUI --target iOSRecorderScreenshot --target iOSRecorderNetwork --target iOSRecorderBonjour --target iOSRecorderStore --target iOSRecorderMCP \
             --disable-indexing \
             --transform-for-static-hosting \
             --hosting-base-path swift-ios-recorder \
