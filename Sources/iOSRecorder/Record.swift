@@ -1,5 +1,6 @@
 import Foundation
 
+/// 1 件のキャプチャに付随するメタデータ。画面名・アプリバージョン・タグ・任意の属性を保持する。
 public struct RecordMetadata: Sendable, Codable, Equatable {
     public var screenName: String?
     public var appVersion: String?

@@ -60,7 +60,7 @@ public actor RingBufferStore: RecordStore {
         totalBytes = 0
     }
 
-    static func byteSize(of record: Record) -> Int {
+    private static func byteSize(of record: Record) -> Int {
         record.artifacts.reduce(0) { $0 + $1.data.count }
     }
 }

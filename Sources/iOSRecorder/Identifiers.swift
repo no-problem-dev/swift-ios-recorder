@@ -1,11 +1,13 @@
 import Foundation
 
+/// キャプチャ 1 件を識別する型付き ID。文字列として直列化される。
 public struct RecordID: RawRepresentable, Hashable, Sendable {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
     public static func generate() -> RecordID { RecordID(rawValue: UUID().uuidString) }
 }
 
+/// デバッグセッション 1 つを識別する型付き ID。文字列として直列化される。
 public struct SessionID: RawRepresentable, Hashable, Sendable {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
