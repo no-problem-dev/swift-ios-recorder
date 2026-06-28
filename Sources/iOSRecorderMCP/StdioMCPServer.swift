@@ -6,6 +6,12 @@ import iOSRecorder
 public struct StdioMCPServer {
     private let handler: MCPRequestHandler
 
+    /// MCP サーバーを初期化する。
+    ///
+    /// `status`/`control`/`storage` は任意。渡すとそれぞれ追加ツールが有効になる:
+    /// - `status`: `connection_status` ツールを公開（受信機の健全性）。
+    /// - `control`: `restart_receiver` ツールを公開（リスナー再起動）。
+    /// - `storage`: `get_storage_info` ツールを公開（件数・使用バイト数）。
     public init(
         store: any RecordStore,
         name: String = "ios-recorder",
@@ -19,6 +25,10 @@ public struct StdioMCPServer {
             status: status, control: control, storage: storage)
     }
 
+    /// stdin から JSON-RPC リクエストを 1 行ずつ読み、stdout に応答を書き続ける主エントリポイント。
+    ///
+    /// stdin が EOF を返すまで戻らない。`claude mcp add` で登録した子プロセスとして起動し、
+    /// この関数を `await` したまま待機させる用途を想定している。
     public func run() async {
         let output = FileHandle.standardOutput
         do {

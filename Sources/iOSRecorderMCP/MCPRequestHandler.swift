@@ -11,6 +11,12 @@ public actor MCPRequestHandler {
     private let control: (any ReceiverControlling)?
     private let storage: (any StorageReporting)?
 
+    /// ハンドラを初期化する。
+    ///
+    /// `status`/`control`/`storage` は任意。渡すとそれぞれ追加ツールが有効になる:
+    /// - `status`: `connection_status` ツールを公開（受信機の健全性）。
+    /// - `control`: `restart_receiver` ツールを公開（リスナー再起動）。
+    /// - `storage`: `get_storage_info` ツールを公開（件数・使用バイト数）。
     public init(
         store: any RecordStore,
         name: String = "ios-recorder",

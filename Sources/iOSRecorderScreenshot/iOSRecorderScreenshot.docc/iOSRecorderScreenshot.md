@@ -4,13 +4,13 @@
 
 ## Overview
 
-`iOSRecorderScreenshot` は `ScreenshotSource` を提供します。`Session` の `sources` に追加するだけで、
+`iOSRecorderScreenshot` は `ScreenshotSource` を提供する。`Session` の `sources` に追加するだけで、
 `capture()` のたびにキーウィンドウを `drawHierarchy` でラスタライズし、縮小 JPEG の `Artifact` を
-キャプチャに添付します。
+キャプチャに添付する。
 
-`ImageRenderer` と異なり `drawHierarchy` はネイティブの `UIViewRepresentable` 要素も確実に写せます。
+`ImageRenderer` と異なり `drawHierarchy` はネイティブの `UIViewRepresentable` 要素も確実に写せる。
 フル解像度 PNG は 1 枚あたり 5 MB を超えることがあるため、ソース段階で長辺を `maxDimension` に縮小してから
-JPEG に変換します。MCP が AI に渡す画像も同じ上限で再縮小されるため、情報損失はほぼ生じません。
+JPEG に変換する。MCP が AI に渡す画像も同じ上限で再縮小されるため、情報損失はほぼ生じない。
 
 ```swift
 import iOSRecorder
@@ -29,7 +29,7 @@ let session = Session(
 try await session.capture(screenName: "Profile")
 ```
 
-ラスタライズは `MainActor` で同期実行し、重い JPEG エンコードはバックグラウンドで行うため、UI スレッドのブロックを最小化しています。
+ラスタライズは `MainActor` で同期実行し、重い JPEG エンコードはバックグラウンドで行うため、UI スレッドのブロックを最小化している。
 
 ## Topics
 

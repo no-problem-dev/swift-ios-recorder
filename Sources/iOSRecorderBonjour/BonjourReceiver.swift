@@ -14,6 +14,15 @@ public final class BonjourReceiver: @unchecked Sendable {
     private let stream: AsyncThrowingStream<Record, any Error>
     private let continuation: AsyncThrowingStream<Record, any Error>.Continuation
 
+    /// TCP リスナーを初期化する。`start()` を呼ぶまで待ち受けは始まらない。
+    ///
+    /// - Parameters:
+    ///   - serviceName: Bonjour 広告名。指定すると同一 LAN に `_iosrecorder._tcp` でサービスを広告し、
+    ///     デバイス側から自動発見できるようになる。`nil` の場合は広告なし（IP 直打ち専用）。
+    ///   - serviceType: Bonjour サービスタイプ。既定値 `_iosrecorder._tcp` を変える必要は通常ない。
+    ///   - port: 待ち受けポート。`.any`（既定値）を指定すると OS が空きポートを選択し、
+    ///     `start()` 後に `resolvedPort` で確認できる。
+    ///   - codec: フレームの符号化・復号化を担う `RecordCodec`。既定値は `JSONRecordCodec`。
     public init(
         serviceName: String? = nil,
         serviceType: String = "_iosrecorder._tcp",
@@ -33,6 +42,11 @@ public final class BonjourReceiver: @unchecked Sendable {
         listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
     }
 
+    /// 受信した `Record` を逐次返す `AsyncThrowingStream`。
+    ///
+    /// ストリームは以下の条件で終了する:
+    /// - `stop()` を呼び出すと正常終了（`finish()`）する。
+    /// - リスナーが障害状態（`.failed`）に遷移すると、その `NWError` を投げてエラー終了する。
     public func records() -> AsyncThrowingStream<Record, any Error> { stream }
 
     /// 待ち受けが始まり port が確定するまで待つ。

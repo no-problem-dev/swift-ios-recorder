@@ -1,31 +1,33 @@
+English | [日本語](./README.ja.md)
+
 # swift-ios-recorder
 
-開発中の iOS アプリの実行時を**計測して保持する**オンデバイス計器。撮った記録（スクショ + state + ログ）を Mac / MCP / AI へ流して、UI 確認ループの手作業を無くす。
+An on-device instrument that **captures and retains** the runtime state of iOS apps under development — screenshots, state JSON, and logs bundled as a single capture — and streams them to Mac, MCP servers, and AI tools, eliminating manual UI verification loops.
 
 ![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)
 ![Platforms](https://img.shields.io/badge/Platforms-iOS%2017.0+%20%7C%20macOS%2014.0+-blue.svg)
 ![SPM](https://img.shields.io/badge/Swift_Package_Manager-compatible-brightgreen.svg)
 
-## 本質
+## Core Idea
 
-**計測（measure）+ 保持（retain）が核。** Mac 連携・MCP 連携はその上に載る能力の 1 つ。
-詳細な設計は [spec.md](./spec.md) を参照。
+**Measure + retain is the foundation.** Mac integration and MCP integration are capabilities built on top.
+See [spec.md](./spec.md) for the detailed design.
 
-## 構成
+## Modules
 
-| モジュール | 役割 |
+| Module | Role |
 |---|---|
-| `iOSRecorder` | コア。Record / Artifact / 各ポート / Session / RingBufferStore / Log・StateSource（依存ゼロ） |
-| `iOSRecorderScreenshot` | `ScreenshotSource`（UIKit drawHierarchy、iOS） |
-| `iOSRecorderUI` | SwiftUI 統合（フロートボタン・シェイク・アプリ内ビューア） |
-| `iOSRecorderBonjour` | Exporter / Receiver（同一 LAN 即時転送、Network framework） |
-| `iOSRecorderStore` | RecordStore のファイル実装（Mac、1 record = 1 フォルダ） |
-| `iOSRecorderMCP` | RecordStore を `list_captures` / `get_capture` / `search_events` / `get_event` に橋渡し（MCP stdio） |
-| `ios-recorder` | Mac companion exe（`serve` / `mcp`） |
+| `iOSRecorder` | Core. `Record` / `Artifact` / ports / `Session` / `RingBufferStore` / `Log` & `StateSource` (zero dependencies) |
+| `iOSRecorderScreenshot` | `ScreenshotSource` (UIKit `drawHierarchy`, iOS only) |
+| `iOSRecorderUI` | SwiftUI integration (floating button, shake-to-capture, in-app viewer) |
+| `iOSRecorderBonjour` | `Exporter` / `Receiver` (same-LAN instant transfer, Network framework) |
+| `iOSRecorderStore` | `RecordStore` file implementation (Mac, 1 record = 1 folder) |
+| `iOSRecorderMCP` | Bridges `RecordStore` to `list_captures` / `get_capture` / `search_events` / `get_event` (MCP stdio) |
+| `ios-recorder` | Mac companion executable (`serve` / `mcp`) |
 
-## 使い方
+## Usage
 
-### iOS アプリ側（DEBUG 限定）
+### iOS app side (DEBUG builds only)
 
 ```swift
 import iOSRecorder
@@ -40,35 +42,35 @@ let session = Session(
         StateSource(encoding: { await appState.snapshot() })
     ],
     store: store,
-    exporters: [BonjourExporter()]   // 同一 LAN の Mac へ即時送信
+    exporters: [BonjourExporter()]   // stream to Mac over the same LAN
 )
 let controller = RecorderController(session: session, store: store)
 
-// ルートに 1 行。タップ/シェイクで計測、長押しで一覧。
+// One line at the root. Tap/shake to capture, long-press to list.
 ContentView().recorder(controller)
 ```
 
-### Mac 側
+### Mac side
 
 ```sh
-# Claude Code に MCP 登録するだけ。受信機は MCP プロセスに同居し、
-# Claude Code の起動/終了に連動して起動/停止する（別デーモン不要）。
+# Register as an MCP server in Claude Code. The receiver runs inside the MCP process,
+# starting and stopping with Claude Code — no separate daemon needed.
 claude mcp add ios-recorder -- ios-recorder mcp
 ```
 
-これで iPhone でフロートボタンを押す → Mac に届く → Claude Code が
-`list_captures` / `get_capture`(maxDimension で縮小) / `search_events` / `get_event` / `delete_capture` / `clear_captures`
-で画面+state を取得、という UI 確認ループが閉じる。
+Once registered, pressing the floating button on iPhone sends a capture to the Mac,
+and Claude Code can retrieve it via `list_captures` / `get_capture` (images downscaled to `maxDimension`)
+/ `search_events` / `get_event` / `delete_capture` / `clear_captures`.
 
-`ios-recorder serve` は受信機のみを単体起動する headless 運用向けの代替手段。
+`ios-recorder serve` is an alternative for headless operation that runs only the receiver.
 
-> バイナリ更新時はコピー後に `codesign --force --sign - <path>` で再署名すること
-> （ad-hoc 署名が無効化され起動時に SIGKILL されるため）。
+> After updating the binary, re-sign it with `codesign --force --sign - <path>`.
+> Without re-signing, the ad-hoc signature is invalidated and the process is killed at launch with SIGKILL.
 
-## 開発
+## Development
 
 ```sh
 swift build && swift test          # 48 tests / 13 suites
-# iOS 専用ターゲットのコンパイル確認:
+# Verify compile for iOS-only targets:
 xcodebuild build -scheme iOSRecorderUI -destination 'generic/platform=iOS'
 ```

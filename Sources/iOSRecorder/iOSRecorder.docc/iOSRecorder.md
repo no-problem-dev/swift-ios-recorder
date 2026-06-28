@@ -4,9 +4,9 @@
 
 ## Overview
 
-`iOSRecorder` はパッケージ全体のコアです。`Session` がトリガを受けて `Source` を並列実行し、
-集めたデータを `Artifact` の配列として `Record` にまとめ、`RecordStore` に保存します。
-必要に応じて `Exporter` へ非同期配送し、失敗を握り潰さずに `ExportOutcome` として記録します。
+`iOSRecorder` はパッケージ全体のコア。`Session` がトリガを受けて `Source` を並列実行し、
+集めたデータを `Artifact` の配列として `Record` にまとめ、`RecordStore` に保存する。
+必要に応じて `Exporter` へ非同期配送し、失敗を握り潰さずに `ExportOutcome` として記録する。
 
 ```swift
 import iOSRecorder
@@ -26,8 +26,8 @@ let record = try await store.fetch(id)
 print(record.artifacts.map(\.kind.rawValue))
 ```
 
-このモジュールは iOS / macOS どちらでも動作し、UIKit にも SwiftUI にも依存しません。
-各拡張ライブラリは以下の役割を担います。
+このモジュールは iOS / macOS どちらでも動作し、UIKit にも SwiftUI にも依存しない。
+各拡張ライブラリは以下の役割を担う。
 
 - UI の組み込み・デバッグパネル表示は `iOSRecorderUI`
 - キャプチャにスクリーンショットを添付するには `iOSRecorderScreenshot`

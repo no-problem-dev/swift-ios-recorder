@@ -5,7 +5,7 @@ import iOSRecorder
 ///
 /// ```
 /// <root>/<recordID>/meta.json
-/// <root>/<recordID>/0-screenshot.png
+/// <root>/<recordID>/0-screenshot.jpg
 /// <root>/<recordID>/1-state.json
 /// ```
 public actor FileRecordStore: RecordStore, StorageReporting {

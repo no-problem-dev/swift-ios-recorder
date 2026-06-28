@@ -8,14 +8,18 @@ import Observation
 @MainActor
 @Observable
 public final class ExportReachability {
+    /// Mac 側の受信機へ TCP 接続が届くかどうか。`start()` を呼んだ後、定期的に更新される。
     public private(set) var isReachable = false
     private let serviceType: String
     private var task: Task<Void, Never>?
 
+    /// 探索するサービスタイプを指定して初期化する。
+    /// - Parameter serviceType: Bonjour サービスタイプ（既定値 `_iosrecorder._tcp`）。
     public init(serviceType: String = "_iosrecorder._tcp") {
         self.serviceType = serviceType
     }
 
+    /// 定期探索を開始する。すでに開始済みの場合は何もしない（冪等）。
     public func start() {
         guard task == nil else { return }
         let serviceType = serviceType
@@ -28,6 +32,7 @@ public final class ExportReachability {
         }
     }
 
+    /// 定期探索を停止し、`isReachable` を `false` にリセットする。
     public func stop() {
         task?.cancel()
         task = nil

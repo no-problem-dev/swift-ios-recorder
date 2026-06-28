@@ -44,6 +44,12 @@ public final class RecorderController {
     public var currentScreen: String?
     @ObservationIgnored private var autoDrainTask: Task<Void, Never>?
 
+    /// コントローラを初期化する。
+    ///
+    /// 任意引数はすべて `nil` 可。渡した引数に応じてパネルに表示される機能が増える:
+    /// `network` → ネットワークタブ、`reachability` → 接続状態、
+    /// `outbox` → pending 件数と自動再送、`debugLog` → デバッグタイムライン、
+    /// `metrics` → メトリクスダッシュボード。
     public init(
         session: Session,
         store: any RecordStore,
@@ -81,6 +87,7 @@ public final class RecorderController {
         }
     }
 
+    /// 自動再送ループを停止する。
     public func stopAutoDrain() {
         autoDrainTask?.cancel()
         autoDrainTask = nil
@@ -121,6 +128,7 @@ public final class RecorderController {
         captureScreenName = ""
     }
 
+    /// ストアから記録一覧・配送状態・pending 件数を再取得してプロパティを更新する。
     public func refresh() async {
         // 到達できているなら退避分を自動再送してから一覧を更新する。
         if let outbox, reachability?.isReachable ?? true {
@@ -135,14 +143,17 @@ public final class RecorderController {
         pendingCount = await outbox?.pendingCount() ?? 0
     }
 
+    /// 指定 ID の完全な `Record`（全 artifact 込み）を取得する。見つからなければ `nil`。
     public func record(for id: RecordID) async -> Record? {
         try? await store.fetch(id)
     }
 
+    /// `record` をエクスポータに再送する。配送済みの記録を手動で再送したい場合に使う。
     public func reexport(_ record: Record) async {
         await session.reexport(record)
     }
 
+    /// 保存済み記録をすべて削除し、一覧を更新する。
     public func removeAll() async {
         try? await store.removeAll()
         await refresh()

@@ -4,19 +4,19 @@
 
 ## Overview
 
-`iOSRecorderStore` は `iOSRecorder` の `RecordStore` プロトコルを実装する `FileRecordStore` を提供します。
-`RingBufferStore`（インメモリ）と置き換えることで、アプリ終了後も記録を保持できます。
+`iOSRecorderStore` は `iOSRecorder` の `RecordStore` プロトコルを実装する `FileRecordStore` を提供する。
+`RingBufferStore`（インメモリ）と置き換えることで、アプリ終了後も記録を保持できる。
 
-1 キャプチャ = 1 フォルダとして保存するため、Finder から中身を直接確認できます。
+1 キャプチャ = 1 フォルダとして保存するため、Finder から中身を直接確認できる。
 
 ```
 <root>/<recordID>/meta.json
-<root>/<recordID>/0-screenshot.jpeg
+<root>/<recordID>/0-screenshot.jpg
 <root>/<recordID>/1-network.json
 ```
 
-`maxRecords` を指定すると、`save()` のたびに古い記録を自動削除してディスク使用量を上限以内に保ちます。
-`StorageReporting` プロトコルも実装しているため、総件数やディスク消費量を `storageInfo()` で取得できます。
+`maxRecords` を指定すると、`save()` のたびに古い記録を自動削除してディスク使用量を上限以内に保つ。
+`StorageReporting` プロトコルも実装しているため、総件数やディスク消費量を `storageInfo()` で取得できる。
 
 ```swift
 import iOSRecorder
@@ -34,8 +34,8 @@ let session = Session(
 )
 try await session.capture(screenName: "Settings")
 
-let info = try await store.storageInfo()
-print("保存件数:", info.count, "バイト:", info.totalBytes)
+let info = await store.storageInfo()
+print("保存件数:", info.totalRecords, "バイト:", info.totalBytes)
 ```
 
 ## Topics
