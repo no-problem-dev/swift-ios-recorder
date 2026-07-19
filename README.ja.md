@@ -25,6 +25,26 @@
 | `iOSRecorderMCP` | RecordStore を `list_captures` / `get_capture` / `search_events` / `get_event` に橋渡し（MCP stdio） |
 | `ios-recorder` | Mac companion exe（`serve` / `mcp`） |
 
+## インストール
+
+```swift
+// Package.swift
+dependencies: [
+    .package(url: "https://github.com/no-problem-dev/swift-ios-recorder.git", from: "0.4.0")
+]
+```
+
+```swift
+.target(name: "YourTarget", dependencies: [
+    .product(name: "iOSRecorder", package: "swift-ios-recorder"),           // コア（計測 + 保持）
+    .product(name: "iOSRecorderUI", package: "swift-ios-recorder"),         // SwiftUI 統合
+    .product(name: "iOSRecorderScreenshot", package: "swift-ios-recorder"), // スクショ計測（iOS）
+    .product(name: "iOSRecorderBonjour", package: "swift-ios-recorder"),    // 同一 LAN の Mac へ転送
+])
+```
+
+Mac companion（`ios-recorder` 実行ファイル）はこのリポジトリを `swift build` してビルドする。
+
 ## 使い方
 
 ### iOS アプリ側（DEBUG 限定）

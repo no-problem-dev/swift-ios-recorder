@@ -25,6 +25,26 @@ See [spec.md](./spec.md) for the detailed design.
 | `iOSRecorderMCP` | Bridges `RecordStore` to `list_captures` / `get_capture` / `search_events` / `get_event` (MCP stdio) |
 | `ios-recorder` | Mac companion executable (`serve` / `mcp`) |
 
+## Installation
+
+```swift
+// Package.swift
+dependencies: [
+    .package(url: "https://github.com/no-problem-dev/swift-ios-recorder.git", from: "0.4.0")
+]
+```
+
+```swift
+.target(name: "YourTarget", dependencies: [
+    .product(name: "iOSRecorder", package: "swift-ios-recorder"),           // core (measure + retain)
+    .product(name: "iOSRecorderUI", package: "swift-ios-recorder"),         // SwiftUI integration
+    .product(name: "iOSRecorderScreenshot", package: "swift-ios-recorder"), // screenshot capture (iOS)
+    .product(name: "iOSRecorderBonjour", package: "swift-ios-recorder"),    // same-LAN transfer to Mac
+])
+```
+
+The Mac companion (`ios-recorder` executable) is built from this repository with `swift build`.
+
 ## Usage
 
 ### iOS app side (DEBUG builds only)
