@@ -24,9 +24,9 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
         // 任意データの構造表示（DebugTimeline 詳細）に使う。モノレポ各所と同じ URL identity。
-        .package(url: "https://github.com/no-problem-dev/swift-structured-data.git", from: "1.3.0"),
+        .package(url: "https://github.com/no-problem-dev/swift-structured-data.git", from: "2.0.0"),
         // デバッグ UI のデザイントークン/コンポーネント。UI 層（iOSRecorderUI）でのみ使う。
-        .package(url: "https://github.com/no-problem-dev/swift-design-system.git", from: "2.0.1"),
+        .package(url: "https://github.com/no-problem-dev/swift-design-system.git", from: "3.0.0"),
     ],
     targets: [
         // ── コア ──────────────────────────────────────────────
