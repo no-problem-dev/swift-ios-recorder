@@ -1,0 +1,11 @@
+version: 1
+builder:
+  configs:
+    - documentation_targets:
+        - iOSRecorder
+        - iOSRecorderBonjour
+        - iOSRecorderMCP
+        - iOSRecorderNetwork
+        - iOSRecorderScreenshot
+        - iOSRecorderStore
+        - iOSRecorderUI
