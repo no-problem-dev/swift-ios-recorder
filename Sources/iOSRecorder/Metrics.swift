@@ -102,7 +102,7 @@ public struct MetricsReport: Sendable {
 
     /// Builds a report around a single scope, which the dashboard renders with no scope switcher.
     public init(title: String, series: [MetricSeries], axes: [MetricAxis] = []) {
-        self.init(title: title, scopes: [MetricsScope(label: "合計", series: series)], axes: axes)
+        self.init(title: title, scopes: [MetricsScope(label: "Total", series: series)], axes: axes)
     }
 
     /// The first option of every axis, keyed by axis id — what the dashboard starts on before anyone taps.

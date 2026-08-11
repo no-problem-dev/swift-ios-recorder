@@ -40,7 +40,7 @@ struct StructuredValueView: View {
             Button {
                 shownChildren += CompactDisplay.childrenStep
             } label: {
-                Label("他 \(total - shownChildren) 件を表示", systemImage: "ellipsis.circle")
+                Label("Show \(total - shownChildren) more", systemImage: "ellipsis.circle")
                     .typography(.labelMedium)
             }
             .buttonStyle(.plain)
@@ -117,7 +117,7 @@ private struct StructuredLeaf: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if truncatable {
-                    Button(expanded ? "折りたたむ" : "全文（\(fullText.count) 文字）") {
+                    Button(expanded ? "Collapse" : "All \(fullText.count) characters") {
                         withAnimation(.snappy) { expanded.toggle() }
                     }
                     .buttonStyle(.plain)

@@ -19,7 +19,7 @@ enum ReexportResult: Equatable {
         if let failure = outcomes.first(where: { !$0.succeeded }) {
             self = .failed(reason: failure.error)
         } else if outcomes.isEmpty {
-            self = .failed(reason: "送信先がありません")
+            self = .failed(reason: "There is no destination to send to")
         } else {
             self = .sent
         }
@@ -27,8 +27,8 @@ enum ReexportResult: Equatable {
 
     var label: String {
         switch self {
-        case .sent: "再送信しました"
-        case .failed: "再送信できませんでした"
+        case .sent: "Sent again"
+        case .failed: "Could not send it again"
         }
     }
 
@@ -82,7 +82,7 @@ struct CaptureDetailView: View {
                                 reexportResult = ReexportResult(await controller.reexport(record))
                             }
                         } label: {
-                            Label(reexportResult?.label ?? "Mac に再送信", systemImage: "paperplane")
+                            Label(reexportResult?.label ?? "Send to the Mac again", systemImage: "paperplane")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.primary)
@@ -119,11 +119,11 @@ struct CaptureDetailView: View {
 
     private func artifactLabel(_ kind: ArtifactKind) -> String {
         switch kind.rawValue {
-        case "network": return "通信"
-        case "debug_timeline": return "タイムライン"
-        case "metrics": return "メトリクス"
-        case "state": return "状態"
-        case "log": return "ログ"
+        case "network": return "Network"
+        case "debug_timeline": return "Timeline"
+        case "metrics": return "Metrics"
+        case "state": return "State"
+        case "log": return "Log"
         default: return kind.rawValue
         }
     }

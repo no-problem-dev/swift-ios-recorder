@@ -30,11 +30,11 @@ public struct MetricsDashboardView: View {
                 .onAppear { syncSelection(report) }
                 .onChange(of: report.title) { _, _ in syncSelection(report) }
             } else {
-                ContentUnavailableView("まだメトリクスがありません", systemImage: "chart.bar.xaxis")
+                ContentUnavailableView("No metrics yet", systemImage: "chart.bar.xaxis")
                     .background(palette.background)
             }
         }
-        .navigationTitle(store.report?.title ?? "メトリクス")
+        .navigationTitle(store.report?.title ?? "Metrics")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
@@ -58,7 +58,7 @@ public struct MetricsDashboardView: View {
                         axisControl(axis)
                     }
                     if report.scopes.count > 1 {
-                        axisRow(label: "スコープ") {
+                        axisRow(label: "Scope") {
                             ForEach(Array(report.scopes.enumerated()), id: \.offset) { index, s in
                                 pill(s.label, active: scopeIndex == index) { scopeIndex = index }
                             }
@@ -138,8 +138,8 @@ private struct SeriesCard: View {
 
                 Chart(series.items) { item in
                     BarMark(
-                        x: .value("割合", item.value),
-                        y: .value("系列", series.title),
+                        x: .value("Share", item.value),
+                        y: .value("Series", series.title),
                         stacking: .normalized
                     )
                     .foregroundStyle(metricColor(item.colorIndex))

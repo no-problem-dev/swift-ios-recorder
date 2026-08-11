@@ -35,13 +35,13 @@ struct NetworkListView: View {
         .scrollContentBackground(.hidden)
         .background(palette.background)
         .navigationTitle("Network")
-        .searchable(text: $query, prompt: "URL・メソッド・ステータスで検索")
+        .searchable(text: $query, prompt: "Search by URL, method, or status")
         .overlay {
             if filtered.isEmpty {
                 ContentUnavailableView(
-                    query.isEmpty ? "通信なし" : "一致なし",
+                    query.isEmpty ? "No requests" : "No matches",
                     systemImage: query.isEmpty ? "network.slash" : "magnifyingglass",
-                    description: Text(query.isEmpty ? "アプリを操作すると通信が流れます" : "「\(query)」に一致する通信はありません")
+                    description: Text(query.isEmpty ? "Requests appear here as you use the app" : "No request matches \u{201C}\(query)\u{201D}")
                 )
             }
         }
@@ -105,13 +105,13 @@ struct NetworkDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                section("リクエスト") {
+                section("Request") {
                     field("Method", log.method)
                     field("URL", log.url)
                     headers(log.requestHeaders)
                     bodyField(log.requestBody)
                 }
-                section("レスポンス") {
+                section("Response") {
                     field("Status", log.statusCode.map(String.init) ?? log.errorMessage ?? "—")
                     field("Duration", "\(Int(log.duration * 1000)) ms")
                     headers(log.responseHeaders)

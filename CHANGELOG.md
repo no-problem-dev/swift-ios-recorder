@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Every label `iOSRecorderUI` draws is in English. These strings render inside the host app, so a
+  developer adopting this package was shipping Japanese into their own debug console without ever
+  seeing it. That includes the default `title` of the `DebugSection` factories
+  (`.metrics`, `.timeline`, `.captures`, `.maintenance`, `.designSystemCatalog`), which are default
+  argument values a caller can still override with anything.
+- `MetricsReport(title:series:axes:)` names its single implicit scope `"Total"` rather than `"合計"`.
+  That label is the scope's `Identifiable` id, but it is view identity only — `MetricsReport` and
+  `MetricsScope` are not `Codable` and are never persisted, so nothing encoded changes.
+- Artifact-kind chips and section headings still derive their text from `ArtifactKind.rawValue`; the
+  raw values themselves (`screenshot`, `state`, `log`, `network`, `debug_timeline`, `metrics`) are
+  what gets encoded and sent to the Mac, and they are untouched.
+
 ## [0.6.0] - 2026-08-11
 
 ### Changed

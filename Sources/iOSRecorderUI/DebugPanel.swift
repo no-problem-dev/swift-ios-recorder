@@ -31,7 +31,7 @@ struct DebugPanel: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("閉じる") { controller.isPresentingPanel = false }
+                    Button("Close") { controller.isPresentingPanel = false }
                 }
             }
             .task { await controller.refresh() }
@@ -52,20 +52,20 @@ private struct DebugSectionView: View {
                 ConnectionRow(controller: controller, reachability: reachability)
             }
         case let .metrics(store):
-            SectionSummaryCard(icon: section.icon ?? "chart.bar.xaxis", tint: .orange, title: store.report?.title ?? (section.title ?? "メトリクス"), preview: section.preview) {
+            SectionSummaryCard(icon: section.icon ?? "chart.bar.xaxis", tint: .orange, title: store.report?.title ?? (section.title ?? "Metrics"), preview: section.preview) {
                 MetricsDashboardView(store: store)
             }
         case let .timeline(log, category):
-            SectionSummaryCard(icon: section.icon ?? "waveform.path.ecg", tint: .purple, title: section.title ?? "Debug ログ", badge: log.events(matching: category).count, preview: section.preview) {
+            SectionSummaryCard(icon: section.icon ?? "waveform.path.ecg", tint: .purple, title: section.title ?? "Debug log", badge: log.events(matching: category).count, preview: section.preview) {
                 DebugTimelineView(log: log, lockedCategory: category)
-                    .navigationTitle(section.title ?? "Debug ログ")
+                    .navigationTitle(section.title ?? "Debug log")
             }
         case let .network(store):
             SectionSummaryCard(icon: section.icon ?? "network", tint: .teal, title: section.title ?? "Network", badge: store.logs.count, preview: section.preview) {
                 NetworkListView(store: store)
             }
         case .captures:
-            CapturesSection(controller: controller, title: section.title ?? "記録")
+            CapturesSection(controller: controller, title: section.title ?? "Captures")
         case let .items(items):
             ItemsCard(items: items)
         case let .statGrid(columns, stats):
@@ -73,7 +73,7 @@ private struct DebugSectionView: View {
         case let .custom(view):
             CustomCard(title: section.title, view: view)
         case let .maintenance(log, network, outbox):
-            MaintenanceCard(title: section.title ?? "メンテナンス", controller: controller,
+            MaintenanceCard(title: section.title ?? "Maintenance", controller: controller,
                             log: log, network: network, outbox: outbox)
         case let .screen(view, tint):
             SectionSummaryCard(icon: section.icon ?? "arrow.up.right.square", tint: tint,
@@ -100,34 +100,34 @@ private struct MaintenanceCard: View {
             Card {
                 VStack(spacing: 0) {
                     if let log {
-                        row("イベントログを消去", icon: "waveform.path.ecg", count: log.events.count) {
+                        row("Clear the event log", icon: "waveform.path.ecg", count: log.events.count) {
                             log.clear()
                         }
                         divider
                     }
                     if let network {
-                        row("通信ログを消去", icon: "network", count: network.logs.count) {
+                        row("Clear the network log", icon: "network", count: network.logs.count) {
                             network.clear()
                         }
                         divider
                     }
-                    row("端末内の記録を全削除", icon: "photo.stack", count: controller.summaries.count, destructive: true) {
+                    row("Delete every capture on this device", icon: "photo.stack", count: controller.summaries.count, destructive: true) {
                         await controller.removeAll()
                     }
                     if let outbox {
                         divider
-                        row("未送信を再送", icon: "paperplane", count: controller.pendingCount) {
+                        row("Send the unsent captures", icon: "paperplane", count: controller.pendingCount) {
                             await outbox.drain()
                             await controller.refresh()
                         }
                         divider
-                        row("未送信を破棄", icon: "xmark.bin", count: controller.pendingCount, destructive: true) {
+                        row("Discard the unsent captures", icon: "xmark.bin", count: controller.pendingCount, destructive: true) {
                             await outbox.discardAll()
                             await controller.refresh()
                         }
                     }
                     divider
-                    row("すべて消去", icon: "trash", destructive: true) {
+                    row("Clear everything", icon: "trash", destructive: true) {
                         log?.clear()
                         network?.clear()
                         await outbox?.discardAll()
@@ -183,16 +183,16 @@ private struct ConnectionRow: View {
                 Circle()
                     .fill(reachability.isReachable ? palette.success : palette.outline)
                     .frame(width: 9, height: 9)
-                Text(reachability.isReachable ? "Mac 接続中" : "Mac 未接続")
+                Text(reachability.isReachable ? "Connected to the Mac" : "Not connected to the Mac")
                     .typography(.titleSmall)
                     .foregroundStyle(palette.onSurface)
                 Spacer()
                 if controller.pendingCount > 0 {
-                    Label("\(controller.pendingCount) 件未送", systemImage: "arrow.up.circle.dotted")
+                    Label("\(controller.pendingCount) unsent", systemImage: "arrow.up.circle.dotted")
                         .typography(.labelMedium)
                         .foregroundStyle(palette.warning)
                 } else {
-                    Text(reachability.isReachable ? "送信できます" : "ios-recorder serve を起動してください")
+                    Text(reachability.isReachable ? "Ready to send" : "Start ios-recorder serve")
                         .typography(.labelMedium)
                         .foregroundStyle(palette.onSurfaceVariant)
                 }
@@ -328,8 +328,8 @@ private struct LatestLine: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
-            Text("最新").typography(.labelSmall).foregroundStyle(palette.onSurfaceVariant)
-            Text(text ?? "まだイベントなし")
+            Text("Latest").typography(.labelSmall).foregroundStyle(palette.onSurfaceVariant)
+            Text(text ?? "No events yet")
                 .typography(.bodySmall)
                 .foregroundStyle(text == nil ? palette.outline : palette.onSurface)
                 .lineLimit(2)
@@ -344,7 +344,7 @@ private struct PreviewStatsRow: View {
 
     var body: some View {
         if stats.isEmpty {
-            Text("データなし").typography(.bodySmall).foregroundStyle(palette.outline)
+            Text("No data").typography(.bodySmall).foregroundStyle(palette.outline)
         } else {
             HStack(alignment: .top, spacing: 20) {
                 ForEach(Array(stats.enumerated()), id: \.offset) { _, stat in
@@ -519,7 +519,7 @@ private struct CapturesSection: View {
                     Button(role: .destructive) {
                         Task { @MainActor in await controller.removeAll() }
                     } label: {
-                        Label("全削除", systemImage: "trash").labelStyle(.titleAndIcon).typography(.labelMedium)
+                        Label("Delete all", systemImage: "trash").labelStyle(.titleAndIcon).typography(.labelMedium)
                     }
                     .tint(palette.error)
                 }
@@ -527,9 +527,9 @@ private struct CapturesSection: View {
 
             if controller.summaries.isEmpty {
                 ContentUnavailableView(
-                    "まだ記録がありません",
+                    "No captures yet",
                     systemImage: "ladybug",
-                    description: Text("🐞 ボタンをタップ、またはシェイクで撮影")
+                    description: Text("Tap the 🐞 button, or shake, to capture")
                 )
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)
@@ -573,7 +573,7 @@ struct CaptureRow: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
-                        Text(summary.metadata.screenName ?? "（無題）")
+                        Text(summary.metadata.screenName ?? "(Untitled)")
                             .typography(.titleSmall)
                             .foregroundStyle(palette.onSurface)
                         Spacer(minLength: 4)
@@ -661,13 +661,13 @@ struct KindChip: View {
     }
 
     private var label: String {
-        if kind == .screenshot { return "画面" }
-        if kind == .state { return "状態" }
-        if kind == .log { return "ログ" }
+        if kind == .screenshot { return "Screen" }
+        if kind == .state { return "State" }
+        if kind == .log { return "Log" }
         switch kind.rawValue {
-        case "network": return "通信"
-        case "debug_timeline": return "タイムライン"
-        case "metrics": return "メトリクス"
+        case "network": return "Network"
+        case "debug_timeline": return "Timeline"
+        case "metrics": return "Metrics"
         default: return kind.rawValue
         }
     }

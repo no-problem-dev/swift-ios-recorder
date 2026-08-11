@@ -123,14 +123,14 @@ public extension DebugSection {
     }
 
     /// Way into the metrics dashboard, showing the series totals on the card by default.
-    static func metrics(_ store: MetricsStore, id: String = "metrics", title: String = "メトリクス", icon: String = "chart.bar.xaxis", preview: [DebugPreviewElement]? = nil) -> DebugSection {
+    static func metrics(_ store: MetricsStore, id: String = "metrics", title: String = "Metrics", icon: String = "chart.bar.xaxis", preview: [DebugPreviewElement]? = nil) -> DebugSection {
         DebugSection(id: id, title: title, icon: icon, layout: .navigationLink, content: .metrics(store),
                      preview: preview ?? DebugPreview.metrics(store))
     }
 
     /// Timeline of debug events, narrowed to a single `category` when one is given.
     /// Unless `preview` says otherwise it reveals health, the newest event and recent activity.
-    static func timeline(_ title: String = "Debug ログ", log: DebugLog, category: String? = nil, id: String? = nil, icon: String = "waveform.path.ecg", preview: [DebugPreviewElement]? = nil) -> DebugSection {
+    static func timeline(_ title: String = "Debug log", log: DebugLog, category: String? = nil, id: String? = nil, icon: String = "waveform.path.ecg", preview: [DebugPreviewElement]? = nil) -> DebugSection {
         DebugSection(id: id ?? "timeline.\(category ?? "all")", title: title, icon: icon, layout: .navigationLink, content: .timeline(log, category: category),
                      preview: preview ?? DebugPreview.timeline(log, category: category))
     }
@@ -142,7 +142,7 @@ public extension DebugSection {
     }
 
     /// The stored captures, drawn inline rather than behind a card.
-    static func captures(id: String = "captures", title: String = "記録") -> DebugSection {
+    static func captures(id: String = "captures", title: String = "Captures") -> DebugSection {
         DebugSection(id: id, title: title, icon: nil, layout: .inline, content: .captures)
     }
 
@@ -165,7 +165,7 @@ public extension DebugSection {
     /// clear the event log, clear the network log, delete every capture, retry or discard the spool, wipe everything.
     static func maintenance(
         id: String = "maintenance",
-        title: String = "メンテナンス",
+        title: String = "Maintenance",
         log: DebugLog? = nil,
         network: NetworkLogStore? = nil,
         outbox: (any OutboxDraining)? = nil
@@ -187,7 +187,7 @@ public extension DebugSection {
     }
 
     /// Way into the design system's component catalog, already titled and tinted.
-    static func designSystemCatalog(id: String = "design-catalog", title: String = "デザインカタログ") -> DebugSection {
+    static func designSystemCatalog(id: String = "design-catalog", title: String = "Design catalog") -> DebugSection {
         screen(id: id, title: title, icon: "paintpalette", tint: .pink) {
             DesignSystemCatalogView()
         }
@@ -238,7 +238,7 @@ enum DebugPreview {
     }
 
     static func status(of events: [DebugEvent]) -> PreviewStatus {
-        if events.isEmpty { return .neutral("空") }
+        if events.isEmpty { return .neutral("Empty") }
         let errors = events.filter(isError).count
         return errors > 0 ? .warning(errors) : .ok
     }
@@ -283,7 +283,7 @@ enum DebugPreview {
     }
 
     static func networkStatus(_ logs: [NetworkLog]) -> PreviewStatus {
-        if logs.isEmpty { return .neutral("空") }
+        if logs.isEmpty { return .neutral("Empty") }
         let errors = logs.filter(\.isFailure).count
         return errors > 0 ? .warning(errors) : .ok
     }

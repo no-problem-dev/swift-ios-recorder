@@ -21,7 +21,7 @@ struct ExpandableText: View {
                     withAnimation(.snappy) { expanded.toggle() }
                 } label: {
                     Label(
-                        expanded ? "折りたたむ" : "全文を表示（\(text.count) 文字）",
+                        expanded ? "Collapse" : "Show all \(text.count) characters",
                         systemImage: expanded ? "chevron.up" : "chevron.down"
                     )
                     .typography(.labelMedium)

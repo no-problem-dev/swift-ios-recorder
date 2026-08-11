@@ -22,7 +22,7 @@ struct DebugTimelineView: View {
             VStack(alignment: .leading, spacing: 8) {
                 if lockedCategory == nil { categoryFilter }
                 if shown.isEmpty {
-                    ContentUnavailableView("まだイベントがありません", systemImage: "waveform.path.ecg")
+                    ContentUnavailableView("No events yet", systemImage: "waveform.path.ecg")
                         .frame(maxWidth: .infinity).padding(.vertical, 24)
                 } else {
                     ForEach(shown) { event in
@@ -39,7 +39,7 @@ struct DebugTimelineView: View {
         }
         .scrollContentBackground(.hidden)
         .background(palette.background)
-        .navigationTitle("Debug ログ")
+        .navigationTitle("Debug log")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
@@ -48,7 +48,7 @@ struct DebugTimelineView: View {
     private var categoryFilter: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                FilterChip(title: "すべて", active: selectedCategory == nil) { selectedCategory = nil }
+                FilterChip(title: "All", active: selectedCategory == nil) { selectedCategory = nil }
                 ForEach(log.categories, id: \.self) { category in
                     FilterChip(title: category, active: selectedCategory == category) { selectedCategory = category }
                 }
@@ -123,19 +123,19 @@ struct DebugEventDetailView: View {
             VStack(alignment: .leading, spacing: 14) {
                 Card {
                     VStack(alignment: .leading, spacing: 8) {
-                        DetailRow(label: "カテゴリ", value: event.category)
-                        DetailRow(label: "イベント", value: event.name)
-                        DetailRow(label: "時刻", value: event.at.formatted(date: .abbreviated, time: .standard))
+                        DetailRow(label: "Category", value: event.category)
+                        DetailRow(label: "Event", value: event.name)
+                        DetailRow(label: "Time", value: event.at.formatted(date: .abbreviated, time: .standard))
                     }
                 }
 
-                labeled("サマリ") {
+                labeled("Summary") {
                     Text(event.summary).typography(.bodyMedium).foregroundStyle(palette.onSurface).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 if !event.attributes.isEmpty {
-                    labeled("属性") {
+                    labeled("Attributes") {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(event.attributes.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
                                 VStack(alignment: .leading, spacing: 2) {
@@ -177,16 +177,16 @@ struct DebugEventDetailView: View {
     }
 
     private var payloadTitle: String {
-        let type = event.attributes["payloadType"].map { "（\($0)）" } ?? ""
+        let type = event.attributes["payloadType"].map { " (\($0))" } ?? ""
         let size = event.payload.map { " · \(CompactDisplay.formatBytes($0.count))" } ?? ""
-        return "データ\(type)\(size)"
+        return "Payload\(type)\(size)"
     }
 
     /// Says so when the payload was cut short at capture time, so a short payload is not read as the whole thing.
     private var truncationNote: String? {
         guard event.attributes["payloadTruncated"] == "true",
               let original = event.attributes["payloadOriginalBytes"].flatMap(Int.init) else { return nil }
-        return "撮影時に \(CompactDisplay.formatBytes(original)) から切り詰め済み"
+        return "Truncated from \(CompactDisplay.formatBytes(original)) at capture time"
     }
 
     @ViewBuilder
