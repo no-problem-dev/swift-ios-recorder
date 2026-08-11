@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-11
+
 ### Changed
 
 - Every label `iOSRecorderUI` draws is in English. These strings render inside the host app, so a
