@@ -171,7 +171,12 @@ public final class RecorderController {
     }
 
     /// Hands a record to the exporters again, for pushing an already delivered capture by hand.
-    public func reexport(_ record: Record) async {
+    ///
+    /// - Returns: One outcome per exporter, empty when there is nowhere to send. Exporting never
+    ///   throws, so these outcomes are the only report of what happened — a caller that drops them
+    ///   cannot tell a delivery from a refusal.
+    @discardableResult
+    public func reexport(_ record: Record) async -> [ExportOutcome] {
         await session.reexport(record)
     }
 

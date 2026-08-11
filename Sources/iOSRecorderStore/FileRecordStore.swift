@@ -10,9 +10,9 @@ import iOSRecorder
 /// <root>/<recordID>/1-state.json
 /// ```
 ///
-/// The Mac companion points `root` at `~/.iosrecorder/captures`. Artifacts are written first and
-/// `meta.json` last, and a folder without a readable `meta.json` is ignored everywhere — so a save
-/// cut short leaves files on disk that no query, fetch or retention pass will ever return or remove.
+/// The Mac companion points `root` at `~/.iosrecorder/captures`. A record folder is assembled
+/// elsewhere and moved in whole, so every folder under the root has a readable `meta.json` — a save
+/// cut short adds nothing rather than leaving files that no query or retention pass can reach.
 public actor FileRecordStore: RecordStore, StorageReporting {
     private let rootURL: URL
     private let maxRecords: Int?
@@ -33,22 +33,32 @@ public actor FileRecordStore: RecordStore, StorageReporting {
         self.maxRecords = maxRecords
     }
 
-    /// Writes the record's artifacts and then its `meta.json`, and prunes to `maxRecords`.
+    /// Writes the record's artifacts and `meta.json`, then prunes to `maxRecords`.
     ///
-    /// Saving an id that already exists overwrites files position by position; artifact files left
-    /// over from a longer previous version of the same record stay on disk, unreferenced by the new
-    /// `meta.json`.
+    /// The whole folder is built away from the root and moved into place in one step, so a record
+    /// under the root is always complete. Saving an id that already exists replaces its folder
+    /// outright, leaving no artifact files behind from a longer previous version.
     ///
-    /// - Throws: Whatever the file system reports. A throw part-way through leaves a folder that no
-    ///   query will list, since `meta.json` is written last.
+    /// - Throws: Whatever the file system reports. A throw leaves the root exactly as it was:
+    ///   nothing added, and any record already stored under that id untouched.
     public func save(_ record: Record) async throws {
-        let recordDir = rootURL.appendingPathComponent(record.id.rawValue, isDirectory: true)
-        try fileManager.createDirectory(at: recordDir, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        // Building under the root instead would leave a folder without a readable `meta.json` on a
+        // throw — invisible to query, fetch and the retention pass, yet still holding disk.
+        let staging = try fileManager.url(
+            for: .itemReplacementDirectory,
+            in: .userDomainMask,
+            appropriateFor: rootURL,
+            create: true
+        )
+        defer { try? fileManager.removeItem(at: staging) }
+        let stagedDir = staging.appendingPathComponent(record.id.rawValue, isDirectory: true)
+        try fileManager.createDirectory(at: stagedDir, withIntermediateDirectories: true)
 
         var stored: [StoredArtifact] = []
         for (index, artifact) in record.artifacts.enumerated() {
             let fileName = "\(index)-\(artifact.kind.rawValue).\(Self.fileExtension(for: artifact.mediaType))"
-            try artifact.data.write(to: recordDir.appendingPathComponent(fileName))
+            try artifact.data.write(to: stagedDir.appendingPathComponent(fileName))
             stored.append(StoredArtifact(
                 kind: artifact.kind.rawValue,
                 mediaType: artifact.mediaType,
@@ -67,7 +77,14 @@ public actor FileRecordStore: RecordStore, StorageReporting {
             attributes: record.metadata.attributes,
             artifacts: stored
         )
-        try Self.encoder.encode(meta).write(to: recordDir.appendingPathComponent("meta.json"))
+        try Self.encoder.encode(meta).write(to: stagedDir.appendingPathComponent("meta.json"))
+
+        let recordDir = rootURL.appendingPathComponent(record.id.rawValue, isDirectory: true)
+        if fileManager.fileExists(atPath: recordDir.path) {
+            _ = try fileManager.replaceItemAt(recordDir, withItemAt: stagedDir)
+        } else {
+            try fileManager.moveItem(at: stagedDir, to: recordDir)
+        }
         invalidateCache()
 
         if let maxRecords { pruneToLimit(maxRecords) }

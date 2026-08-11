@@ -7,11 +7,44 @@ import UIKit
 import AppKit
 #endif
 
+/// What a hand-triggered re-send did, as the button has to show it.
+///
+/// A failure has to stay a failure on screen: the person pressing this is watching for one, and a
+/// button that says it sent and then greys itself out takes away both the news and the retry.
+enum ReexportResult: Equatable {
+    case sent
+    case failed(reason: String?)
+
+    init(_ outcomes: [ExportOutcome]) {
+        if let failure = outcomes.first(where: { !$0.succeeded }) {
+            self = .failed(reason: failure.error)
+        } else if outcomes.isEmpty {
+            self = .failed(reason: "送信先がありません")
+        } else {
+            self = .sent
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .sent: "再送信しました"
+        case .failed: "再送信できませんでした"
+        }
+    }
+
+    var reason: String? {
+        switch self {
+        case .sent: nil
+        case .failed(let reason): reason
+        }
+    }
+}
+
 struct CaptureDetailView: View {
     let summary: RecordSummary
     let controller: RecorderController
     @State private var record: Record?
-    @State private var didReexport = false
+    @State private var reexportResult: ReexportResult?
     @Environment(\.colorPalette) private var palette
 
     var body: some View {
@@ -43,17 +76,25 @@ struct CaptureDetailView: View {
                         }
                     }
 
-                    Button {
-                        Task { @MainActor in
-                            await controller.reexport(record)
-                            didReexport = true
+                    VStack(alignment: .leading, spacing: 6) {
+                        Button {
+                            Task { @MainActor in
+                                reexportResult = ReexportResult(await controller.reexport(record))
+                            }
+                        } label: {
+                            Label(reexportResult?.label ?? "Mac に再送信", systemImage: "paperplane")
+                                .frame(maxWidth: .infinity)
                         }
-                    } label: {
-                        Label(didReexport ? "再送信しました" : "Mac に再送信", systemImage: "paperplane")
-                            .frame(maxWidth: .infinity)
+                        .buttonStyle(.primary)
+                        // Only a delivery that worked ends the job; a refusal has to stay retryable.
+                        .disabled(reexportResult == .sent)
+
+                        if let reason = reexportResult?.reason {
+                            Text(reason)
+                                .font(.caption)
+                                .foregroundStyle(palette.error)
+                        }
                     }
-                    .buttonStyle(.primary)
-                    .disabled(didReexport)
                 } else {
                     ProgressView().frame(maxWidth: .infinity).padding(.vertical, 40)
                 }

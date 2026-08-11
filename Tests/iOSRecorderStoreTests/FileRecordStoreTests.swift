@@ -169,3 +169,74 @@ import iOSRecorderTestSupport
         #expect(try await store.query(RecordQuery()).isEmpty)
     }
 }
+
+/// A save that throws part-way must leave nothing behind. Anything it does leave is invisible to
+/// `query`, `fetch` and the retention pass — which all need `meta.json` — while still occupying
+/// disk, so the directory grows past `maxRecords` with no way back short of `removeAll`.
+@Suite struct FileRecordStoreInterruptedSaveTests {
+    private func makeRoot() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("iosrecorder-interrupted-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    /// An artifact whose name puts it in a directory that does not exist fails its write, which
+    /// stops the save after earlier artifacts have already landed.
+    private func recordThatFailsMidSave(id: String) -> Record {
+        RecordFixtures.make(id: RecordID(rawValue: id), artifacts: [
+            .log(text: String(repeating: "a", count: 4096)),
+            Artifact(kind: ArtifactKind(rawValue: "into/nowhere"), mediaType: "text/plain", data: Data([1]))
+        ])
+    }
+
+    @Test func interruptedSaveLeavesNoBytesOnDisk() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = FileRecordStore(rootURL: root)
+
+        await #expect(throws: (any Error).self) {
+            try await store.save(recordThatFailsMidSave(id: "torn"))
+        }
+
+        let info = await store.storageInfo()
+        #expect(info.totalRecords == 0)
+        #expect(info.totalBytes == 0, "an interrupted save left \(info.totalBytes) bytes no query or prune can reach")
+    }
+
+    /// The retention cap is enforced by counting readable records, so an unreadable leftover is
+    /// storage that grows without limit no matter what `maxRecords` says.
+    @Test func retentionStaysWithinLimitAcrossInterruptedSaves() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = FileRecordStore(rootURL: root, maxRecords: 2)
+
+        for index in 0 ..< 5 {
+            try await store.save(RecordFixtures.make(id: RecordID(rawValue: "ok-\(index)")))
+            await #expect(throws: (any Error).self) {
+                try await store.save(recordThatFailsMidSave(id: "torn-\(index)"))
+            }
+        }
+
+        let info = await store.storageInfo()
+        #expect(info.totalRecords == 2)
+        let directories = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+        #expect(directories.count == 2, "kept \(directories.count) directories under a 2 record cap")
+    }
+
+    /// An interrupted save must not damage the record already stored under that id.
+    @Test func interruptedOverwriteKeepsThePreviousRecordIntact() async throws {
+        let root = makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = FileRecordStore(rootURL: root)
+
+        let original = RecordFixtures.make(id: RecordID(rawValue: "keep"), artifacts: [.log(text: "original")])
+        try await store.save(original)
+
+        await #expect(throws: (any Error).self) {
+            try await store.save(recordThatFailsMidSave(id: "keep"))
+        }
+
+        let fetched = try await store.fetch(RecordID(rawValue: "keep"))
+        #expect(fetched.artifacts.count == 1)
+        #expect(fetched.artifacts.first?.data == Data("original".utf8))
+    }
+}

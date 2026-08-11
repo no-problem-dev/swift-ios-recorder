@@ -454,3 +454,63 @@ private actor FakeControl: ReceiverControlling {
     init(snapshot: ReceiverStatusSnapshot) { self.snapshot = snapshot }
     func restart() async -> ReceiverStatusSnapshot { restartCount += 1; return snapshot }
 }
+
+/// An agent acts on what this handler says. Reporting a failure as success, or as an empty list,
+/// makes it delete work it thinks is saved and give up on captures that are really there.
+@Suite struct MCPRequestHandlerFailureReportingTests {
+    private func failingHandler() -> MCPRequestHandler {
+        MCPRequestHandler(store: FailingRecordStore())
+    }
+
+    private func send(_ handler: MCPRequestHandler, _ object: [String: Any]) async -> [String: Any]? {
+        let data = try! JSONSerialization.data(withJSONObject: object)
+        guard let out = await handler.handle(data) else { return nil }
+        return try! JSONSerialization.jsonObject(with: out) as? [String: Any]
+    }
+
+    private func call(_ handler: MCPRequestHandler, _ name: String, _ arguments: [String: Any] = [:]) async -> [String: Any]? {
+        await send(handler, [
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": ["name": name, "arguments": arguments]
+        ])
+    }
+
+    private func isError(_ response: [String: Any]?) -> Bool {
+        if response?["error"] != nil { return true }
+        return (response?["result"] as? [String: Any])?["isError"] as? Bool == true
+    }
+
+    @Test func deleteThatFailedIsNotReportedAsDeleted() async {
+        let response = await call(failingHandler(), "delete_capture", ["id": "z"])
+        #expect(isError(response), "a delete the store refused came back as success: \(String(describing: response))")
+    }
+
+    @Test func clearThatFailedIsNotReportedAsCleared() async {
+        let response = await call(failingHandler(), "clear_captures")
+        #expect(isError(response), "a clear the store refused came back as success: \(String(describing: response))")
+    }
+
+    @Test func unreadableStoreIsNotReportedAsNoCaptures() async {
+        let response = await call(failingHandler(), "list_captures")
+        #expect(isError(response), "an unreadable store came back as an empty capture list: \(String(describing: response))")
+    }
+
+    @Test func unreadableStoreIsNotReportedAsNoSearchHits() async {
+        let response = await call(failingHandler(), "search_events", ["text": "boom"])
+        #expect(isError(response), "an unreadable store came back as zero search hits: \(String(describing: response))")
+    }
+
+    /// A request carrying an id is a request: it must be answered, or the client blocks on it forever.
+    @Test func requestWithAnIDButNoMethodIsAnswered() async {
+        let handler = failingHandler()
+        let response = await send(handler, ["jsonrpc": "2.0", "id": 42])
+        #expect(response != nil, "a request with an id and no method got no reply at all")
+        #expect(response?["id"] as? Int == 42)
+        #expect(response?["error"] != nil)
+    }
+
+    /// A message with neither id nor method cannot be replied to, and must stay silent.
+    @Test func messageWithNeitherIDNorMethodStaysSilent() async {
+        #expect(await send(failingHandler(), ["jsonrpc": "2.0"]) == nil)
+    }
+}

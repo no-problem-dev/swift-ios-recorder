@@ -37,18 +37,22 @@ public actor MCPRequestHandler {
 
     /// Handles one request and returns the bytes to write back.
     ///
-    /// `nil` means write nothing: the message was a notification, or it carried no `method` at all.
-    /// A caller that was waiting on an id in that second case waits forever.
+    /// `nil` means write nothing, and only ever for a message that carries no `id`: a notification,
+    /// or a malformed message nobody is waiting on. Anything with an `id` gets an answer, because a
+    /// client that sent one blocks until it arrives.
     ///
-    /// Failures are not uniform: a missing or malformed argument comes back as a JSON-RPC error, a
-    /// capture or event that is not there comes back as a result marked `isError`, and a store that
-    /// fails for any other reason comes back as an ordinary empty result.
+    /// A missing or malformed argument comes back as a JSON-RPC error; a capture or event that is
+    /// not there, and a store that cannot be read, come back as a result marked `isError` — never as
+    /// an empty or successful one.
     public func handle(_ requestData: Data) async -> Data? {
         guard let object = try? JSONSerialization.jsonObject(with: requestData) as? [String: Any] else {
             return Self.encode(["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "parse error"]])
         }
-        guard let method = object["method"] as? String else { return nil }
         let id = object["id"]
+        guard let method = object["method"] as? String else {
+            guard id != nil else { return nil }
+            return response(id: id, error: (-32600, "invalid request: no method"))
+        }
 
         switch method {
         case "initialize":
@@ -196,8 +200,12 @@ public actor MCPRequestHandler {
 
         switch name {
         case "list_captures":
-            let summaries = (try? await server.listCaptures(Self.query(from: arguments))) ?? []
-            return response(id: id, result: ["content": [["type": "text", "text": Self.summariesJSON(summaries)]]])
+            do {
+                let summaries = try await server.listCaptures(Self.query(from: arguments))
+                return response(id: id, result: ["content": [["type": "text", "text": Self.summariesJSON(summaries)]]])
+            } catch {
+                return toolFailure(id: id, "could not read captures: \(error)")
+            }
         case "get_capture":
             guard let rawID = arguments["id"] as? String else {
                 return response(id: id, error: (-32602, "missing argument: id"))
@@ -216,10 +224,12 @@ public actor MCPRequestHandler {
                 ])
             }
         case "search_events":
-            let query = Self.eventQuery(from: arguments)
-            let result = (try? await server.searchEvents(query))
-                ?? DebugEventSearchResult(hits: [], scannedCaptures: 0, scanTruncated: false)
-            return response(id: id, result: ["content": [["type": "text", "text": Self.searchResultJSON(result)]]])
+            do {
+                let result = try await server.searchEvents(Self.eventQuery(from: arguments))
+                return response(id: id, result: ["content": [["type": "text", "text": Self.searchResultJSON(result)]]])
+            } catch {
+                return toolFailure(id: id, "could not search events: \(error)")
+            }
         case "get_event":
             guard let rawCaptureID = arguments["captureId"] as? String,
                   let rawEventID = arguments["eventId"] as? String,
@@ -242,10 +252,18 @@ public actor MCPRequestHandler {
             guard let rawID = arguments["id"] as? String else {
                 return response(id: id, error: (-32602, "missing argument: id"))
             }
-            try? await server.deleteCapture(RecordID(rawValue: rawID))
+            do {
+                try await server.deleteCapture(RecordID(rawValue: rawID))
+            } catch {
+                return toolFailure(id: id, "could not delete \(rawID): \(error)")
+            }
             return response(id: id, result: ["content": [["type": "text", "text": "deleted \(rawID)"]]])
         case "clear_captures":
-            try? await server.clearCaptures()
+            do {
+                try await server.clearCaptures()
+            } catch {
+                return toolFailure(id: id, "could not clear captures: \(error)")
+            }
             return response(id: id, result: ["content": [["type": "text", "text": "cleared all captures"]]])
         case "connection_status":
             guard let status else { return response(id: id, error: (-32602, "connection_status unavailable")) }
@@ -284,6 +302,15 @@ public actor MCPRequestHandler {
     }
 
     // MARK: - JSON-RPC envelope
+
+    /// A tool that could not do its job, said so. The model reads `isError` and the text; a plain
+    /// result would have it carry on as though the work had happened.
+    private func toolFailure(id: Any?, _ message: String) -> Data {
+        response(id: id, result: [
+            "content": [["type": "text", "text": message]],
+            "isError": true
+        ])
+    }
 
     private func response(id: Any?, result: [String: Any]) -> Data {
         Self.encode(["jsonrpc": "2.0", "id": id ?? NSNull(), "result": result])

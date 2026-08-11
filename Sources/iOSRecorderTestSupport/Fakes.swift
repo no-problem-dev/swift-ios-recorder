@@ -87,3 +87,26 @@ public actor FlakyExporter: Exporter {
 
     public func exportedCount() -> Int { exported.count }
 }
+
+/// Fails every call, standing in for a store whose backing directory is gone or unreadable.
+///
+/// This is what separates "there are no captures" from "the captures cannot be read" — two answers a
+/// caller has to be able to tell apart, and which a swallowed error collapses into one.
+public actor FailingRecordStore: RecordStore, StorageReporting {
+    public struct Failure: Error, Equatable {
+        public let operation: String
+        public init(operation: String) { self.operation = operation }
+    }
+
+    public init() {}
+
+    public func save(_ record: Record) async throws { throw Failure(operation: "save") }
+    public func query(_ query: RecordQuery) async throws -> [RecordSummary] { throw Failure(operation: "query") }
+    public func fetch(_ id: RecordID) async throws -> Record { throw Failure(operation: "fetch") }
+    public func delete(_ id: RecordID) async throws { throw Failure(operation: "delete") }
+    public func removeAll() async throws { throw Failure(operation: "removeAll") }
+
+    public func storageInfo() async -> StorageInfo {
+        StorageInfo(totalRecords: 0, totalBytes: 0, oldestRecordedAt: nil, newestRecordedAt: nil, location: "unreadable")
+    }
+}
