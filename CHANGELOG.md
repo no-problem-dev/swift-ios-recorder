@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-11
+
 ### Changed
 
 - Raised the swift-design-system pin to 4.0.0.
