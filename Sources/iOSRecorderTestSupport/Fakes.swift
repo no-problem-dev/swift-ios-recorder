@@ -1,7 +1,7 @@
 import Foundation
 import iOSRecorder
 
-/// 任意の Artifact（または nil）を返す Source。
+/// Returns one fixed artifact every time, or `nil` to stand in for a source that had nothing to measure.
 public struct FakeSource: Source {
     public let kind: ArtifactKind
     private let artifact: Artifact?
@@ -14,7 +14,10 @@ public struct FakeSource: Source {
     public func measure(_ context: RecordContext) async -> Artifact? { artifact }
 }
 
-/// 保存した記録を覚えておく in-memory な RecordStore。
+/// Keeps every saved capture in memory, in order, with no eviction, so a test can assert on the whole history.
+///
+/// Saving appends without replacing an existing id, unlike the real stores, so a test that saves the same
+/// capture twice sees two entries and fetches the first.
 public actor FakeRecordStore: RecordStore {
     public private(set) var saved: [Record] = []
 
@@ -46,7 +49,7 @@ public actor FakeRecordStore: RecordStore {
     public func savedCount() -> Int { saved.count }
 }
 
-/// export 呼び出しを記録する Exporter。任意で失敗させられる。
+/// Records what it was asked to export, or throws on every call when built to fail.
 public actor FakeExporter: Exporter {
     public private(set) var exported: [Record] = []
     private let shouldThrow: Bool
@@ -65,7 +68,7 @@ public actor FakeExporter: Exporter {
     public func exportedCount() -> Int { exported.count }
 }
 
-/// 実行時に成否を切り替えられる Exporter。outbox の再送検証用。
+/// Goes offline and back online mid-test, which is what the outbox retry path needs to be exercised.
 public actor FlakyExporter: Exporter {
     public private(set) var exported: [Record] = []
     private var online: Bool

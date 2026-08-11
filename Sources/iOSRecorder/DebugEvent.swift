@@ -1,19 +1,23 @@
 import Foundation
 
-/// ストリーミング・デバッグログの単位。あらゆるデバッグデータ（AI 動作・UI 生成・通信・任意構造体）を
-/// この時刻付き封筒に正規化する。`payload` は Artifact.data と同じく不透明。
+/// One timestamped entry in the live debug log — an agent step, a generated surface, a request, any value at all.
+///
+/// Everything is normalized into this one envelope so the timeline stays a single list. `payload` is opaque to
+/// this package, exactly like artifact data, so a new kind of event needs no change here.
 public struct DebugEvent: Sendable, Codable, Identifiable, Equatable {
     public let id: UUID
     public let at: Date
-    /// 開いた識別子。例: "agent" / "a2ui" / "network" / "metric"。
+    /// Groups events for filtering and for the timeline's section list. Open set; `agent`, `a2ui`, `network`, `metric` are conventional.
     public let category: String
-    /// イベント名。例: "tool_call" / "surface_created" / "decode_failed"。
+    /// Distinguishes events inside a category, such as `tool_call` or `decode_failed`.
+    ///
+    /// Counts are grouped by `category.name`, so this is the granularity of every derived number.
     public let name: String
-    /// 人間・AI が 1 行で読めるサマリ。
+    /// The single line a person or an agent reads without opening the payload.
     public let summary: String
-    /// 構造化の補足（toolName, surfaceId, tokens 等）。
+    /// Structured detail beside the summary (toolName, surfaceId, tokens). Truncation leaves its own record here too.
     public let attributes: [String: String]
-    /// 任意の生データ（不透明）。
+    /// The raw data behind the summary. May have been cut down at capture time — check `payloadTruncated` in the attributes before trusting its length.
     public let payload: Data?
 
     public init(
@@ -36,8 +40,9 @@ public struct DebugEvent: Sendable, Codable, Identifiable, Equatable {
 }
 
 public extension DebugEvent {
-    /// 不透明な `payload` と型ヒント `attributes["payloadType"]` を落とした複製。
-    /// Bonjour/MCP へ畳む時に冗長な base64 を除き、summary/attributes だけ残す。
+    /// A copy with the payload and its type hint stripped, leaving the summary and the remaining attributes.
+    ///
+    /// For folding a timeline into a message where base64 payloads would drown out everything else.
     func withoutPayload() -> DebugEvent {
         var attrs = attributes
         attrs.removeValue(forKey: "payloadType")
@@ -47,12 +52,14 @@ public extension DebugEvent {
         )
     }
 
-    /// payload を maxBytes に収めた複製。超過分は UTF-8 境界を保って切り、
-    /// 元のバイト数を `attributes["payloadOriginalBytes"]` に刻む。
-    /// 外れ値（巨大 prompt 等）だけが対象になり、典型イベントは素通りする。
+    /// A copy whose payload is cut down to fit, keeping UTF-8 characters whole and recording what was lost.
+    ///
+    /// Events already inside the limit come back untouched, so only outliers such as a full prompt pay anything.
+    /// The truncated copy carries `payloadTruncated` and `payloadOriginalBytes` in its attributes.
+    /// - Parameter maxBytes: Ceiling for the payload after cutting.
     func withPayloadLimited(to maxBytes: Int) -> DebugEvent {
         guard let payload, payload.count > maxBytes else { return self }
-        // テキスト payload なら UTF-8 境界（最大 3 バイト戻し）を保って切る。バイナリならそのまま切る。
+        // Step back up to 3 bytes to land on a UTF-8 boundary; binary payloads keep the blunt cut.
         var truncated = payload.prefix(maxBytes)
         for back in 0..<4 where maxBytes - back >= 0 {
             let candidate = payload.prefix(maxBytes - back)
@@ -70,8 +77,10 @@ public extension DebugEvent {
         )
     }
 
-    /// 任意の Encodable 値を payload に詰める。利用側が差し込んだどんな構造体でも
-    /// 「全データ」を JSON として保持し、詳細ビューで構造表示できる。
+    /// Puts any encodable value into the payload as JSON, so the detail view can show its structure.
+    ///
+    /// The value's Swift type name is recorded in `payloadType`. If encoding fails the event is still emitted,
+    /// with that type name but no payload at all.
     init(
         category: String,
         name: String,
@@ -95,7 +104,7 @@ public extension DebugEvent {
         )
     }
 
-    /// 生テキストを payload に詰める（JSON でないログ・LLM 出力など）。
+    /// Puts plain text into the payload, for output that is not JSON — log lines, model completions.
     init(
         category: String,
         name: String,

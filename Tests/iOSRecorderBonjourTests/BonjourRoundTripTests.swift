@@ -6,7 +6,8 @@ import iOSRecorderTestSupport
 
 @Suite struct BonjourRoundTripTests {
     @Test func sendsRecordOverLoopback() async throws {
-        // serviceName を渡さない → Bonjour 広告なし（ローカルネットワーク権限を踏まない）
+        // No serviceName means nothing is advertised, which keeps the local network permission
+        // prompt out of the test run; the exporter dials the resolved port directly instead.
         let receiver = try BonjourReceiver(port: .any)
         try await receiver.start()
         let port = try #require(receiver.resolvedPort)

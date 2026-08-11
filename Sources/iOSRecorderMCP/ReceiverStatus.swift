@@ -1,6 +1,9 @@
 import Foundation
 
-/// Mac 側受信機の健全性スナップショット。MCP の connection_status が返す。
+/// How the receiver is doing at one instant, as reported by the `connection_status` tool.
+///
+/// `totalReceived` and `lastReceivedAt` are what answer the question this exists for: take a
+/// capture on the device, ask again, and see whether the count moved.
 public struct ReceiverStatusSnapshot: Sendable, Codable, Equatable {
     public var listening: Bool
     public var port: UInt16?
@@ -26,12 +29,14 @@ public struct ReceiverStatusSnapshot: Sendable, Codable, Equatable {
     }
 }
 
-/// 受信機の状態を MCP に渡すポート（exe 側が実装）。
+/// Lets the MCP layer ask about a receiver it does not own. Implemented by the executable that
+/// actually holds the listener; supplying one is what makes the `connection_status` tool appear.
 public protocol ReceiverStatusProviding: Sendable {
     func status() async -> ReceiverStatusSnapshot
 }
 
-/// 受信機を貼り直すポート（restart_receiver 用、exe 側が実装）。
+/// Lets the MCP layer rebuild the listener from scratch. Supplying one makes the
+/// `restart_receiver` tool appear, and also enables automatic recovery before every tool call.
 public protocol ReceiverControlling: Sendable {
     func restart() async -> ReceiverStatusSnapshot
 }

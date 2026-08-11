@@ -1,14 +1,17 @@
 import Foundation
 
-/// 計器の中核。トリガを受けて Source を回し、Record を組み立て、Store に保持し、
-/// 任意で Exporter に出す。1 デバッグセッションに 1 つ。
+/// Runs every source on demand, saves the record they add up to, and hands it to the exporters. One per debug session.
+///
+/// Saving is the only step that can fail the caller. Export failures are kept as ``ExportOutcome`` and read back
+/// through ``deliveryState(for:)``, so a capture is never lost because the receiver was unreachable.
 public actor Session {
     public nonisolated let id: SessionID
     public nonisolated let appVersion: String?
     private let sources: [any Source]
     private let store: any RecordStore
     private var exporters: [any Exporter]
-    /// キャプチャごとの配送結果。握り潰さず観測できるようにする固定長ログ。
+    /// Delivery results per capture, capped at `outcomeCapacity`. Older captures lose their
+    /// history and read back as pending even if they were delivered.
     private var outcomes: [RecordID: [ExportOutcome]] = [:]
     private var outcomeOrder: [RecordID] = []
     private let outcomeCapacity = 200
@@ -27,23 +30,26 @@ public actor Session {
         self.exporters = exporters
     }
 
-    /// 出力能力を後から足す。無くても記録は保持される。
+    /// Adds an export route to a running session; captures taken before this are not sent, pass them to ``reexport(_:)``.
     public func attach(_ exporter: any Exporter) {
         exporters.append(exporter)
     }
 
-    /// 既存の記録を出力ポートへ再送信する。配送結果を記録する。
+    /// Puts an already-saved capture through the exporters again, replacing whatever outcomes it had.
     @discardableResult
     public func reexport(_ record: Record) async -> [ExportOutcome] {
         await deliver(record)
     }
 
-    /// あるキャプチャの配送結果（exporter ごと）。
+    /// One outcome per exporter, or empty when the capture is old enough to have been evicted from the outcome log.
     public func outcomes(for id: RecordID) -> [ExportOutcome] {
         outcomes[id] ?? []
     }
 
-    /// あるキャプチャの配送状態を UI 向けに畳んで返す。
+    /// Collapses the per-exporter outcomes into the single state a list row can show.
+    ///
+    /// Anything with no recorded outcome reads as `.pending`, which includes captures whose history has aged out
+    /// of the log — an old capture can therefore claim to be pending long after it was delivered.
     public func deliveryState(for id: RecordID) -> DeliveryState {
         guard !exporters.isEmpty else { return .notExported }
         let results = outcomes[id] ?? []
@@ -53,12 +59,12 @@ public actor Session {
         return .pending(reason: reason)
     }
 
-    /// 直近の配送結果（新しい順）。
+    /// Outcomes across every capture still in the log, newest capture first.
     public func recentOutcomes(limit: Int = 50) -> [ExportOutcome] {
         outcomeOrder.reversed().flatMap { outcomes[$0] ?? [] }.prefix(limit).map { $0 }
     }
 
-    /// 全 exporter へ送り、結果を記録して返す。
+    /// Sends to every exporter in turn; one that throws does not stop the others.
     private func deliver(_ record: Record) async -> [ExportOutcome] {
         var results: [ExportOutcome] = []
         for exporter in exporters {
@@ -82,7 +88,11 @@ public actor Session {
         }
     }
 
-    /// 全 Source を並列に回して 1 つの Record を組み立て、保持する。
+    /// Measures every source concurrently and saves the one capture they add up to.
+    ///
+    /// Sources that return `nil` are simply absent from the result, and artifacts arrive in completion order
+    /// rather than the order the sources were listed.
+    /// - Throws: Whatever the store throws while saving. Export failures are recorded, never raised.
     @discardableResult
     public func capture(
         screenName: String? = nil,
@@ -115,7 +125,7 @@ public actor Session {
         )
 
         try await store.save(record)
-        // 出力は best-effort。失敗しても保持は守るが、結果は握り潰さず記録する。
+        // Export is best effort: a failure here must not lose the capture that is already saved.
         _ = await deliver(record)
         return record.id
     }

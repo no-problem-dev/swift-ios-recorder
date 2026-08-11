@@ -1,18 +1,21 @@
 import Foundation
 
-/// 機密ヘッダ/クエリ/ボディのマスクとボディの truncate。実通信なしで単体テストできる。
+/// Masks secrets in headers, query strings and bodies, and cuts bodies down to size. Pure string
+/// work, so it is testable without any real traffic.
 ///
-/// 方針: 「キー名が秘密情報を示唆するなら値を隠す」。完全一致リストではなく部分一致で
-/// 判定し、`client_secret` / `oauth_signature` / `X-Auth-Token` のような複合キーも捕捉する。
-/// デバッグ計器なので false positive（無害な値を隠す）は許容し、漏れの方を防ぐ。
+/// The rule is that a key name suggesting a secret hides its value. Matching is by substring rather
+/// than an exact list, which is what catches compound names like `client_secret`, `oauth_signature`
+/// and `X-Auth-Token`. This is debug instrumentation: hiding a harmless value costs nothing, and
+/// leaking one costs a rotated key, so it errs toward hiding.
 public enum NetworkLogSanitizer {
-    /// キー名にこれらが含まれたら機密とみなす（lowercase 比較）。
+    /// A key containing any of these is treated as a secret. Compared in lowercase.
     static let sensitiveKeyFragments = [
         "password", "secret", "token", "auth", "credential", "signature",
         "apikey", "api-key", "api_key", "cookie"
     ]
 
-    /// ヘッダ名・クエリキー・JSON キーが機密を示唆するか。
+    /// Whether a header name, query key or JSON key suggests a secret. Also catches the bare
+    /// `key` and `sig` names and anything ending in `key`, which the fragment list would miss.
     static func isSensitiveKey(_ name: String) -> Bool {
         let lower = name.lowercased()
         if lower == "key" || lower == "sig" || lower.hasSuffix("key") { return true }
@@ -27,8 +30,9 @@ public enum NetworkLogSanitizer {
         return result
     }
 
-    /// URL のクエリパラメータのうち機密キーの値を *** に置換する。
-    /// 多くの API（Gemini 等）は鍵をヘッダではなく URL クエリで渡すため必須。
+    /// Replaces the value of any sensitive query parameter with `***`, leaving the rest of the URL
+    /// intact. Plenty of APIs — Gemini among them — take the key as `?key=` rather than a header,
+    /// so masking headers alone would still ship the key.
     public static func maskURL(_ url: String) -> String {
         guard var components = URLComponents(string: url), let items = components.queryItems else { return url }
         components.queryItems = items.map { item in
@@ -37,8 +41,12 @@ public enum NetworkLogSanitizer {
         return components.string ?? url
     }
 
-    /// テキストボディ中の JSON 文字列値のうち、キーが機密を示唆するものを *** に置換する。
-    /// POST body の `{"api_key": "..."}` や応答の `{"session_token": "..."}` を隠す。
+    /// Replaces JSON string values whose key suggests a secret, so a request body of
+    /// `{"api_key": "..."}` or a response of `{"session_token": "..."}` leaves nothing usable.
+    ///
+    /// Works on the raw text rather than parsed JSON, so it also covers bodies that are truncated
+    /// or not valid JSON at all. Only string values are reachable this way — a secret stored as a
+    /// number or nested inside an array of strings survives.
     public static func maskJSONStringValues(_ text: String) -> String {
         var result = text
         for match in Self.jsonStringPair.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
@@ -50,11 +58,17 @@ public enum NetworkLogSanitizer {
         return result
     }
 
-    /// `"key" : "value"` のペア。group 1 = key、group 2 = value（エスケープ対応）。
+    /// Matches a `"key" : "value"` pair, tolerating backslash escapes inside either. Group 1 is
+    /// the key, group 2 the value.
     private static let jsonStringPair = try! NSRegularExpression(
         pattern: #""((?:[^"\\]|\\.)*)"\s*:\s*"((?:[^"\\]|\\.)*)""#
     )
 
+    /// Decodes raw body bytes as UTF-8, keeping at most `limit` *bytes* — unlike
+    /// `truncate(_:limit:)`, which counts characters. Empty and absent bodies both answer `nil`.
+    ///
+    /// The cut lands on a byte boundary, so a multi-byte character straddling it decodes to U+FFFD,
+    /// and binary bodies come back as mostly U+FFFD. `looksBinary(_:)` keys off exactly that.
     public static func bodyString(_ data: Data?, limit: Int = 4096) -> String? {
         guard let data, !data.isEmpty else { return nil }
         let text = String(decoding: data.prefix(limit), as: UTF8.self)
@@ -64,19 +78,23 @@ public enum NetworkLogSanitizer {
         return text
     }
 
-    /// すでに String 化されたボディを truncate する（既存の NetworkLog 用）。
+    /// Cuts an already-decoded body down to `limit` characters, appending a note with the original
+    /// length so a reader can tell a short body from a shortened one.
     public static func truncate(_ text: String, limit: Int = 4096) -> String {
         guard text.count > limit else { return text }
         return String(text.prefix(limit)) + "\n…(truncated, \(text.count) chars total)"
     }
 
-    /// ヘッダを大小無視で引く（HTTP ヘッダは case-insensitive）。
+    /// Looks a header up case-insensitively, since a server may answer `content-type` where the
+    /// caller asks for `Content-Type` and a plain dictionary lookup would miss it.
     public static func headerValue(_ headers: [String: String], _ name: String) -> String? {
         for (key, value) in headers where key.caseInsensitiveCompare(name) == .orderedSame { return value }
         return nil
     }
 
-    /// Content-Type がテキスト系か。不明（nil/空）は保持側に倒す（実体は redactBody で sniff）。
+    /// Whether a Content-Type names a text format. A missing or empty type answers `true` so that
+    /// bodies are kept by default; `redactBody(_:contentType:contentLength:limit:)` then sniffs the
+    /// content itself to catch binary that arrived without a type.
     public static func isTextualContentType(_ contentType: String?) -> Bool {
         guard let lower = contentType?.lowercased(), !lower.isEmpty else { return true }
         if lower.hasPrefix("text/") { return true }
@@ -84,14 +102,26 @@ public enum NetworkLogSanitizer {
             || lower.contains("html") || lower.contains("csv") || lower.contains("x-www-form-urlencoded")
     }
 
-    /// バイナリを誤って UTF-8 テキスト化した痕跡（置換文字 U+FFFD）があるか。
+    /// Whether the text bears the mark of binary decoded as UTF-8: a U+FFFD replacement character
+    /// in the first 2 KB. Only the head is examined, so binary that starts with an ASCII header
+    /// longer than that reads as text.
     static func looksBinary(_ text: String) -> Bool {
         text.prefix(2048).contains("\u{FFFD}")
     }
 
-    /// Content-Type が非テキスト（画像/動画/バイナリ）なら body をサイズ付きプレースホルダに置換し、
-    /// テキストなら機密 JSON 値をマスクして truncate する。Content-Type 不明でもバイナリの痕跡が
-    /// あれば省略する。mojibake と機密を Record/Bonjour/MCP に流さないための根治点。
+    /// Turns a captured body into something safe and small enough to carry: a non-text body becomes
+    /// `<elided image/jpeg, 124534 bytes>`, a text body keeps its shape with JSON secrets masked and
+    /// the tail cut off.
+    ///
+    /// Bodies with no declared type are elided too if they look like decoded binary, which is what
+    /// stops a megabyte of mojibake from being copied into a capture and then into an AI's context.
+    ///
+    /// - Parameters:
+    ///   - body: Already-decoded body text, or `nil`, which passes through unchanged.
+    ///   - contentType: Declared type. Absent or empty means sniff the body instead.
+    ///   - contentLength: Declared size, reported verbatim in the placeholder. Falls back to the
+    ///     body's own UTF-8 length, which under-reports a body that was already truncated.
+    ///   - limit: Characters of text body to keep.
     public static func redactBody(
         _ body: String?,
         contentType: String?,

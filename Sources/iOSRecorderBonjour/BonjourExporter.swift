@@ -2,16 +2,19 @@ import Foundation
 import Network
 import iOSRecorder
 
-/// 記録を framed にして TCP で送る Exporter。
-/// `init(serviceType:)` は Bonjour で Mac を発見、`init(host:port:)` は直結。
+/// Sends a record to a receiver on the same LAN as one length-prefixed TCP frame.
+///
+/// `init(serviceType:)` finds the receiver by browsing the local network, which on iOS requires
+/// local network permission; `init(host:port:)` skips browsing and dials a known address, which is
+/// what tests and tethered setups use.
 public struct BonjourExporter: Exporter {
     private enum Target: Sendable {
         case service(type: String)
         case hostPort(host: String, port: UInt16)
     }
 
-    /// 一度通った具体アドレス(host:port)を覚えておく箱。mDNS のハイハイや
-    /// IPv6 link-local 誤選択でコケた時の取りこぼしを減らす（テザリング耐性）。
+    /// Remembers the concrete host and port that last worked, so a flaky mDNS answer or a bad
+    /// IPv6 link-local pick costs at most one record instead of every record.
     actor EndpointCache {
         private(set) var endpoint: NWEndpoint?
         func set(_ value: NWEndpoint) { endpoint = value }
@@ -44,6 +47,20 @@ public struct BonjourExporter: Exporter {
         self.timeout = timeout
     }
 
+    /// Encodes the record and writes it to the receiver as a single frame.
+    ///
+    /// Returning without throwing means the bytes were handed to TCP — not that the receiver
+    /// decoded or stored them. A frame the receiver cannot decode is dropped on its side and
+    /// still counts as delivered here.
+    ///
+    /// A deadline is configured but cannot cut a stalled attempt short: the call returns only once
+    /// Network reports success or failure. With no receiver running, or with local network
+    /// permission denied, the browser waits instead of failing and this call does not come back —
+    /// so callers that must stay responsive should not await it on a path a person is watching.
+    ///
+    /// - Throws: `ExporterError.payloadTooLarge` when the encoded record exceeds the 64 MB frame
+    ///   limit, thrown before any connection is attempted; `ExporterError.transportFailed` for an
+    ///   unusable port; otherwise the underlying `NWError`.
     public func export(_ record: Record) async throws {
         let encoded = try codec.encode(record)
         guard encoded.count <= Framing.maxPayloadBytes else {
@@ -51,17 +68,17 @@ public struct BonjourExporter: Exporter {
         }
         let payload = Framing.frame(encoded)
         try await withTimeout(timeout) {
-            // 1) 直近に通った具体アドレスを最優先で試す（ブラウズ不要 → 速くて安定）。
+            // 1) Try the address that worked last time first: no browsing, so it is fast and steady.
             if let cached = await cache.endpoint {
                 do {
                     let resolved = try await send(payload, to: cached)
                     await cache.set(resolved)
                     return
                 } catch {
-                    await cache.invalidate()   // 陳腐化 → 発見し直す
+                    await cache.invalidate()   // Gone stale, so discover again.
                 }
             }
-            // 2) Bonjour で発見 → 送信 → 通った具体アドレスをキャッシュ。
+            // 2) Discover, send, then remember the address that actually worked.
             let endpoint = try await resolveEndpoint()
             let resolved = try await send(payload, to: endpoint)
             await cache.set(resolved)
@@ -101,7 +118,8 @@ public struct BonjourExporter: Exporter {
         }
     }
 
-    /// 送信し、実際に到達した具体アドレス(host:port)を返す（次回キャッシュ用）。
+    /// Sends the frame and reports the concrete address it reached, which is what gets cached —
+    /// a Bonjour endpoint resolves to a different host each time, so caching it would be useless.
     private func send(_ payload: Data, to endpoint: NWEndpoint) async throws -> NWEndpoint {
         let connection = NWConnection(to: endpoint, using: .tcp)
         let queue = DispatchQueue(label: "iosrecorder.exporter")

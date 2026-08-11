@@ -1,7 +1,13 @@
 import Foundation
 
-/// 全 URLSession 通信を傍受して NetworkLogStore に流す URLProtocol。
-/// 自分が転送するリクエストには handledKey を付けて再帰を防ぐ。
+/// Intercepts `URLSession` traffic and files each exchange in the shared `NetworkLogStore`.
+///
+/// Requests are replayed through an inner session, marked so the interceptor declines them the
+/// second time around — without that mark each request would spawn another one forever.
+///
+/// Only bodies the caller set as `httpBody` are recorded; a streamed or multipart upload arrives
+/// as `httpBodyStream` and is logged with no request body at all. The whole response is buffered in
+/// memory to be logged, so a large download is held twice while it is in flight.
 final class RecordingURLProtocol: URLProtocol, @unchecked Sendable {
     private static let handledKey = "iOSRecorderHandled"
     nonisolated(unsafe) static var ignoredHosts: [String] = []

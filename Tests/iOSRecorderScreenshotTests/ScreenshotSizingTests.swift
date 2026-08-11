@@ -9,7 +9,7 @@ import CoreGraphics
     }
 
     @Test func scalesLongestSideToMaxPreservingAspect() {
-        // iPhone 16 Pro 3x = 1206 x 2622 相当
+        // matches an iPhone 16 Pro at 3x: 1206 x 2622
         let size = ScreenshotSizing.fitted(CGSize(width: 1206, height: 2622), maxDimension: 1024)
         #expect(size.height == 1024)
         #expect(abs(size.width - 1206 * (1024 / 2622)) < 1)

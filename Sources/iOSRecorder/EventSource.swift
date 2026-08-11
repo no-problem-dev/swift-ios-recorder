@@ -1,7 +1,9 @@
 import Foundation
 
-/// 任意の値を時系列で push しておく型付き固定長バッファ。`LogBuffer` の Generics 版。
-/// AI がレスポンスを吐いた瞬間などに `append` しておき、計測時に `EventSource` が snapshot する。
+/// A fixed-size backlog of typed values to push into as things happen, for a later capture to pick up.
+///
+/// Append at the moment of interest — a model response arriving, say — and the values wait there until someone
+/// captures. Once `capacity` is reached the oldest values are dropped.
 public actor EventBuffer<Value: Sendable> {
     private var items: [Value] = []
     private let capacity: Int
@@ -22,8 +24,10 @@ public actor EventBuffer<Value: Sendable> {
     public func clear() { items.removeAll() }
 }
 
-/// `EventBuffer` に積まれた値の列を計測時に 1 つの Artifact（JSON 配列）に畳み込む Source。
-/// 空なら artifact を作らない。要素の Swift 型名を `attributes["type"]` に刻む。
+/// Folds whatever is sitting in an ``EventBuffer`` into one JSON array at capture time.
+///
+/// An empty buffer yields no artifact. Measuring does not drain the buffer, so back-to-back captures repeat the
+/// same values until something clears it. The element's Swift type name is written to `attributes["type"]`.
 public struct EventSource<Value: Encodable & Sendable>: Source {
     public let kind: ArtifactKind
     private let typeName: String

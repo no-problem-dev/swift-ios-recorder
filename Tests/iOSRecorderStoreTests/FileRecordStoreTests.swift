@@ -134,7 +134,7 @@ import iOSRecorderTestSupport
 
         let info = await store.storageInfo()
         #expect(info.totalRecords == 2)
-        #expect(info.totalBytes >= 3000)   // artifact 本体 + meta.json
+        #expect(info.totalBytes >= 3000)   // Artifact bytes plus the meta.json alongside them
         #expect(info.oldestRecordedAt == Date(timeIntervalSince1970: 100))
         #expect(info.newestRecordedAt == Date(timeIntervalSince1970: 200))
     }
@@ -157,13 +157,13 @@ import iOSRecorderTestSupport
         let store = FileRecordStore(rootURL: makeRoot())
         try await store.save(RecordFixtures.make(id: RecordID(rawValue: "a")))
         #expect(try await store.query(RecordQuery()).count == 1)
-        #expect(try await store.query(RecordQuery()).count == 1)   // キャッシュ経由でも同じ
+        #expect(try await store.query(RecordQuery()).count == 1)   // Same answer served from cache
 
         try await store.save(RecordFixtures.make(id: RecordID(rawValue: "b")))
-        #expect(try await store.query(RecordQuery()).count == 2)   // save 後に反映
+        #expect(try await store.query(RecordQuery()).count == 2)   // A save invalidates it
 
         try await store.delete(RecordID(rawValue: "a"))
-        #expect(try await store.query(RecordQuery()).map(\.id.rawValue) == ["b"])   // delete 後に反映
+        #expect(try await store.query(RecordQuery()).map(\.id.rawValue) == ["b"])   // So does a delete
 
         try await store.removeAll()
         #expect(try await store.query(RecordQuery()).isEmpty)

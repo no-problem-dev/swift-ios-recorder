@@ -1,12 +1,14 @@
 import Foundation
 import iOSRecorder
 
-/// デバッグイベントの検索条件。
+/// What to look for in a debug event search. Every field set narrows the result further; `category`
+/// and `name` match exactly, and an unset field does not filter at all.
 public struct DebugEventQuery: Sendable {
     public var captureID: RecordID?
     public var category: String?
     public var name: String?
-    /// summary / name / attributes への部分一致（大文字小文字を無視）。
+    /// Substring match, case-insensitive, against the name, the summary and the attributes joined
+    /// together — not against the event payload, which search never reads.
     public var text: String?
     public var since: Date?
     public var limit: Int = 50
@@ -14,25 +16,28 @@ public struct DebugEventQuery: Sendable {
     public init() {}
 }
 
-/// 検索でヒットしたイベントと、それが属する capture。
+/// An event that matched, paired with the capture it was found in — which is the handle needed to
+/// fetch its payload afterwards.
 public struct DebugEventHit: Sendable {
     public let captureID: RecordID
     public let event: DebugEvent
 }
 
-/// 検索結果と走査の事実。打ち切りを黙らせない（見つからない ≠ 存在しない、を AI に伝える）。
+/// Matches plus how much ground the search actually covered, so that "nothing found" can be told
+/// apart from "stopped looking" by whoever reads the result.
 public struct DebugEventSearchResult: Sendable {
     public let hits: [DebugEventHit]
-    /// 実際に走査した capture 数。
     public let scannedCaptures: Int
-    /// 走査上限で打ち切られ、未走査の capture が残っているか。
+    /// Whether captures were left unread because the scan limit was reached. When `true`, absence
+    /// of a hit proves nothing — narrow the search or name a capture.
     public let scanTruncated: Bool
 }
 
-/// RecordStore を MCP ツール群に橋渡しするドメイン層。
+/// Turns a `RecordStore` into the operations the MCP tools expose, with no JSON-RPC in sight.
 public actor RecordMCPServer {
     private let store: any RecordStore
-    /// captureID 未指定の検索で走査する capture 数の上限。
+    /// Ceiling on captures opened by a search that does not name one. Searches read whole captures
+    /// off disk, so this bounds the cost of a broad query.
     private let maxScannedCaptures: Int
 
     public init(store: any RecordStore, maxScannedCaptures: Int = 50) {
@@ -56,7 +61,13 @@ public actor RecordMCPServer {
         try await store.removeAll()
     }
 
-    /// capture 横断（新しい順）でデバッグイベントを検索する。
+    /// Searches debug events across captures, newest capture first.
+    ///
+    /// Naming a capture in the query reads only that one; otherwise captures holding a debug
+    /// timeline are read until either `limit` matches accumulate or the scan ceiling is hit, which
+    /// the result flags. Captures that fail to load are skipped without comment.
+    ///
+    /// - Throws: The store's error only when the query names a capture that cannot be read.
     public func searchEvents(_ query: DebugEventQuery) async throws -> DebugEventSearchResult {
         let records: [Record]
         var scanTruncated = false
@@ -87,7 +98,8 @@ public actor RecordMCPServer {
         return DebugEventSearchResult(hits: hits, scannedCaptures: records.count, scanTruncated: scanTruncated)
     }
 
-    /// 指定 capture 内のイベントを payload 込みで 1 件返す。
+    /// One event with its payload attached — the second half of the search-then-read pair, since
+    /// search deliberately omits payloads. `nil` means the capture holds no event with that id.
     public func getEvent(capture: RecordID, eventID: UUID) async throws -> DebugEvent? {
         Self.timelineEvents(in: try await store.fetch(capture)).first { $0.id == eventID }
     }

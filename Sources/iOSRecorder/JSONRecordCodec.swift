@@ -1,6 +1,8 @@
 import Foundation
 
-/// `RecordCodec` の JSON 実装。日付は ISO 8601 形式で直列化する。Bonjour 転送のデフォルト codec。
+/// The wire format the Bonjour transport uses unless another codec is supplied; dates travel as ISO 8601.
+///
+/// Artifact bytes ride along base64-encoded, so an encoded screenshot is roughly a third larger than the file.
 public struct JSONRecordCodec: RecordCodec {
     public init() {}
 

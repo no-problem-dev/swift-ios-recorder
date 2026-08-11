@@ -14,15 +14,15 @@ import iOSRecorderTestSupport
     }
 
     @Test func hugeHeaderReadsAsUnacceptable() {
-        // 0xFFFFFFFF = 4GB 級の悪意ある/壊れた長さプレフィックス
+        // 0xFFFFFFFF is the worst a 4-byte prefix can claim: roughly 4 GB.
         let length = Framing.readLength(Data([0xFF, 0xFF, 0xFF, 0xFF]))
         #expect(Framing.isAcceptableLength(length) == false)
     }
 }
 
 @Suite struct ReceiverFrameLimitTests {
-    /// 悪意あるピアが巨大な長さプレフィックスを送っても、受信機は巨大メモリ確保に
-    /// 突入せず接続を切り、その後の正常な送信は受け続ける。
+    /// A hostile peer claiming a huge frame gets hung up on instead of allocated for, and the
+    /// receiver keeps serving everyone else afterwards.
     @Test func rejectsOversizedFrameAndKeepsServing() async throws {
         let receiver = try BonjourReceiver(port: .any)
         try await receiver.start()
@@ -33,10 +33,10 @@ import iOSRecorderTestSupport
             return nil
         }
 
-        // 1) 巨大ヘッダ（4GB 級）を生 TCP で送り込む
+        // 1) Push a ~4 GB length prefix over raw TCP.
         try await sendRaw(Data([0xFF, 0xFF, 0xFF, 0xFF]) + Data("junk".utf8), port: port)
 
-        // 2) 別接続での正常な記録は引き続き受信できる
+        // 2) A well-formed record on a separate connection still arrives.
         let exporter = BonjourExporter(host: "127.0.0.1", port: port)
         let record = RecordFixtures.make(id: RecordID(rawValue: "after-attack"))
         try await exporter.export(record)
@@ -83,7 +83,7 @@ import iOSRecorderTestSupport
 
 @Suite struct ExporterFrameLimitTests {
     @Test func refusesToExportOversizedRecord() async throws {
-        let exporter = BonjourExporter(host: "127.0.0.1", port: 9)   // 接続前に弾かれるのでポートは無関係
+        let exporter = BonjourExporter(host: "127.0.0.1", port: 9)   // Rejected before dialling, so the port is irrelevant
         let record = RecordFixtures.make(artifacts: [
             Artifact(kind: .state, mediaType: "application/octet-stream",
                      data: Data(count: Framing.maxPayloadBytes + 1))

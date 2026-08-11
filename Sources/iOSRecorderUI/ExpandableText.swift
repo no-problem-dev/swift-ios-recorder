@@ -1,7 +1,7 @@
 import SwiftUI
 import DesignSystem
 
-/// 長文を既定で折り畳み、タップで全文を見せるテキスト。payload・生ログの表示に使う。
+/// Starts folded and opens in full on tap, for payloads and raw logs that would otherwise flood the screen.
 struct ExpandableText: View {
     let text: String
     var previewLimit: Int = CompactDisplay.textPreviewLimit

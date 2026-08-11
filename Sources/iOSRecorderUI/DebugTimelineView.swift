@@ -2,11 +2,11 @@ import SwiftUI
 import DesignSystem
 import iOSRecorder
 
-/// デバッグイベントのライブ・タイムライン。`DebugLog`(@Observable) を購読し、
-/// 生成中もリアルタイムに流れる。カテゴリ（AI / UI / 通信 …）で絞り込める。
+/// Live timeline that follows `DebugLog` as events arrive, so entries appear while work is still running.
+/// Categories are whatever the app writes (AI, UI, network …); the package defines none of them.
 struct DebugTimelineView: View {
     let log: DebugLog
-    /// 指定するとそのカテゴリに固定し、フィルタバーを出さない（セクションで関心を分離する用途）。
+    /// Pins the view to one category and drops the filter bar, for a section that covers a single concern.
     var lockedCategory: String? = nil
     @State private var selectedCategory: String?
     @Environment(\.colorPalette) private var palette
@@ -14,7 +14,7 @@ struct DebugTimelineView: View {
     private var shown: [DebugEvent] {
         let category = lockedCategory ?? selectedCategory
         let events = category.map { log.events(in: $0) } ?? log.events
-        return events.reversed()   // 新しい順
+        return events.reversed()   // newest first
     }
 
     var body: some View {
@@ -105,15 +105,15 @@ private struct EventRow: View {
     }
 }
 
-/// カテゴリ名から安定した色を導出する。ドメイン（agent / a2ui 等）をパッケージは知らないので、
-/// 文字列を決定的にハッシュしてパレットに割り当てる（同じカテゴリは毎回同じ色）。
+/// Hashes a category name into the palette, since the package cannot know the app's domain
+/// (agent, a2ui and so on); the same name therefore keeps the same color across runs.
 func categoryColor(_ category: String) -> Color {
     var hash: UInt64 = 5381
     for byte in category.utf8 { hash = (hash &* 33) &+ UInt64(byte) }
     return metricColor(Int(hash % 10))
 }
 
-/// デバッグイベント 1 件の詳細。全フィールド + attributes + payload を表示。
+/// Everything recorded for one event: its fields, its attributes and its payload.
 struct DebugEventDetailView: View {
     let event: DebugEvent
     @Environment(\.colorPalette) private var palette
@@ -182,7 +182,7 @@ struct DebugEventDetailView: View {
         return "データ\(type)\(size)"
     }
 
-    /// capture 時に payload が truncate されていたら、その事実を表示する。
+    /// Says so when the payload was cut short at capture time, so a short payload is not read as the whole thing.
     private var truncationNote: String? {
         guard event.attributes["payloadTruncated"] == "true",
               let original = event.attributes["payloadOriginalBytes"].flatMap(Int.init) else { return nil }

@@ -40,7 +40,7 @@ struct DebugPanel: View {
     }
 }
 
-/// 1 セクションを content に応じて描画する。順序・配置は console（利用側）が決める。
+/// Draws one section according to its content; the order and the layout come from the app's console.
 private struct DebugSectionView: View {
     let section: DebugSection
     @Bindable var controller: RecorderController
@@ -84,7 +84,7 @@ private struct DebugSectionView: View {
     }
 }
 
-// MARK: - メンテナンス（手元データの掃除・再送）
+// MARK: - Maintenance (clearing on-device data, retrying sends)
 
 private struct MaintenanceCard: View {
     let title: String
@@ -142,7 +142,7 @@ private struct MaintenanceCard: View {
         Divider().overlay(palette.outlineVariant)
     }
 
-    /// 操作 1 行。ライブ件数を添え、対象が空ならボタンを無効化する。
+    /// One operation row, carrying a live count and disabling itself when there is nothing to act on.
     private func row(
         _ title: String,
         icon: String,
@@ -170,7 +170,7 @@ private struct MaintenanceCard: View {
     }
 }
 
-// MARK: - Mac 接続状態
+// MARK: - Mac connection state
 
 private struct ConnectionRow: View {
     @Bindable var controller: RecorderController
@@ -201,8 +201,8 @@ private struct ConnectionRow: View {
     }
 }
 
-// MARK: - サマリカード（メトリクス / タイムライン / ネットワーク共通の動線）
-// 見出し（アイコン＋タイトル＋件数＋状態ピル）に加え、タップ前の覗き見プレビューを描く。
+// MARK: - Summary card (shared entry point for metrics / timeline / network)
+// Draws a header (icon, title, count, status pill) plus a peek at the content before anyone taps it.
 
 private struct SectionSummaryCard<Destination: View>: View {
     @Environment(\.colorPalette) private var palette
@@ -263,7 +263,7 @@ private struct SectionSummaryCard<Destination: View>: View {
     }
 }
 
-/// 状態ピル。ok は控えめ、warning/error は色付きで件数を出す。
+/// Stays quiet for ok and turns colored with a count for warning and error, so trouble is visible first.
 private struct StatusPill: View {
     let status: PreviewStatus
     @Environment(\.colorPalette) private var palette
@@ -292,7 +292,7 @@ private struct StatusPill: View {
     }
 }
 
-/// プレビュー要素列を縦に描く。
+/// Stacks the preview elements; a `.status` element draws nothing here because the card hoists it into the header.
 private struct SectionPreviewView: View {
     let elements: [DebugPreviewElement]
     @Environment(\.colorPalette) private var palette
@@ -401,7 +401,7 @@ private struct PreviewChips: View {
     }
 }
 
-// MARK: - Stat グリッド
+// MARK: - Stat grid
 
 private struct StatGridCard: View {
     let title: String?
@@ -444,7 +444,7 @@ private struct StatTile: View {
     }
 }
 
-// MARK: - 任意ビュー
+// MARK: - App-supplied view
 
 private struct CustomCard: View {
     let title: String?
@@ -458,7 +458,7 @@ private struct CustomCard: View {
     }
 }
 
-// MARK: - デバッグ項目（アプリが差し込む action/toggle/info）
+// MARK: - Debug items (action / toggle / info supplied by the app)
 
 private struct ItemsCard: View {
     let items: [DebugItem]
@@ -502,7 +502,7 @@ private struct ItemsCard: View {
     }
 }
 
-// MARK: - 記録一覧
+// MARK: - Capture list
 
 private struct CapturesSection: View {
     @Bindable var controller: RecorderController
@@ -549,7 +549,6 @@ private struct CapturesSection: View {
     }
 }
 
-/// セクション見出し（小さな uppercase 風ラベル）。
 struct SectionHeader: View {
     let title: String
     @Environment(\.colorPalette) private var palette
@@ -561,7 +560,7 @@ struct SectionHeader: View {
     }
 }
 
-/// 記録 1 件のカード表現。
+/// One capture as a card: screen name, how long ago, delivery badge, and a chip per artifact kind.
 struct CaptureRow: View {
     let summary: RecordSummary
     var delivery: DeliveryState = .notExported
@@ -598,7 +597,7 @@ struct CaptureRow: View {
     }
 }
 
-/// 子を行内に並べ、幅を超えたら折り返す簡易フローレイアウト。
+/// Places children left to right and wraps to a new row once the proposed width runs out.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 4
 
@@ -634,7 +633,7 @@ struct FlowLayout: Layout {
     }
 }
 
-/// 配送状態のアイコン。
+/// Icon for the delivery state; a capture from a session with no exporter shows nothing at all.
 struct DeliveryBadge: View {
     let state: DeliveryState
     @Environment(\.colorPalette) private var palette

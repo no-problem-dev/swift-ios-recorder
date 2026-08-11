@@ -19,8 +19,8 @@ func log(_ message: String) {
     FileHandle.standardError.write(Data((message + "\n").utf8))
 }
 
-/// 受信機を保持し、受信統計（件数・最終受信時刻・稼働時間・ポート）を追跡する。
-/// MCP の connection_status / restart_receiver の実体（ポート実装）。
+/// Owns the receiver and tracks what has come in: total count, last arrival, uptime and port.
+/// This is what the MCP tools connection_status and restart_receiver actually act on.
 actor ReceiverHub: ReceiverStatusProviding, ReceiverControlling {
     private let store: FileRecordStore
     private let serviceName: String
@@ -29,7 +29,7 @@ actor ReceiverHub: ReceiverStatusProviding, ReceiverControlling {
     private var pump: Task<Void, Never>?
     private var total = 0
     private var lastReceivedAt: Date?
-    /// 世代カウンタ。最新の pump が終わった時だけ自己修復する（古い pump 終了での誤回復を防ぐ）。
+    /// Only the newest pump is allowed to heal, so a stale pump finishing cannot tear down a live receiver.
     private var generation = 0
 
     init(store: FileRecordStore, serviceName: String = "iOSRecorder") {
@@ -55,12 +55,12 @@ actor ReceiverHub: ReceiverStatusProviding, ReceiverControlling {
                     await self?.ingest(record)
                 }
             } catch {}
-            // ストリーム終了 = listener 失敗。最新世代なら自動で貼り直す（自己修復）。
+            // The stream ending means the listener failed; if this is still the newest generation, put it back up.
             await self?.healIfCurrent(myGeneration)
         }
     }
 
-    /// listener が落ちた時の自動回復。最新世代のみ・短いバックオフ後に再起動。
+    /// Brings a dropped listener back after a short backoff, and only for the newest generation.
     private func healIfCurrent(_ generationAtStart: Int) async {
         guard generationAtStart == generation else { return }
         try? await Task.sleep(for: .seconds(1))
@@ -111,8 +111,8 @@ case "serve":
     try await Task.sleep(for: .seconds(60 * 60 * 24 * 365))
 
 case "mcp":
-    // Claude Code が spawn する MCP プロセスに受信機を同居させる。
-    // hub を connection_status / restart_receiver、store を get_storage_info のポートとして渡す。
+    // The receiver rides along in the MCP process Claude Code spawns, so it starts and stops with it.
+    // hub backs connection_status / restart_receiver; store backs get_storage_info.
     await hub.startReceiving()
     await StdioMCPServer(store: store, status: hub, control: hub, storage: store).run()
 

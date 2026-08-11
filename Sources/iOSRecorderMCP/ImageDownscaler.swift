@@ -3,10 +3,20 @@ import ImageIO
 import CoreGraphics
 import UniformTypeIdentifiers
 
-/// 画像を maxDimension に収まるよう縮小し JPEG で再エンコードする。
-/// MCP の get_capture で AI へ返す画像のトークン量を抑えるために使う。
+/// Shrinks a screenshot to fit a maximum edge and re-encodes it as JPEG, because a full-resolution
+/// screenshot costs an enormous number of tokens once it is base64'd into a tool result.
 enum ImageDownscaler {
-    /// - Returns: 縮小できた場合は (jpegData, "image/jpeg")。失敗時は nil。
+    /// Re-encodes the image, applying its EXIF orientation so the result is upright.
+    ///
+    /// An image already smaller than `maxDimension` is not enlarged, but it is still re-encoded as
+    /// lossy JPEG — a small PNG can come out bigger than it went in.
+    ///
+    /// - Parameters:
+    ///   - maxDimension: Longest edge to allow, in pixels. Zero or less returns `nil`, which
+    ///     callers use to mean "send the original untouched".
+    ///   - jpegQuality: 0 to 1, trading artefacts against bytes.
+    /// - Returns: The JPEG and its media type, or `nil` if the data is not a decodable image or
+    ///   encoding failed — in which case nothing was shrunk and the original is all there is.
     static func downscale(_ data: Data, maxDimension: Int, jpegQuality: Double = 0.8) -> (data: Data, mimeType: String)? {
         guard maxDimension > 0,
               let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }

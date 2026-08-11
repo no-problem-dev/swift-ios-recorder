@@ -1,8 +1,8 @@
 import Foundation
 import iOSRecorder
 
-/// MCP（JSON-RPC 2.0）リクエストを処理する純ハンドラ。トランスポート非依存なので
-/// JSON を渡すだけで単体テストできる。list_captures / get_capture を公開する。
+/// Answers MCP requests as pure JSON-RPC 2.0, with no transport attached — hand it request bytes
+/// and it hands back response bytes, which is what makes the whole tool surface unit-testable.
 public actor MCPRequestHandler {
     private let server: RecordMCPServer
     private let serverName: String
@@ -11,12 +11,14 @@ public actor MCPRequestHandler {
     private let control: (any ReceiverControlling)?
     private let storage: (any StorageReporting)?
 
-    /// ハンドラを初期化する。
+    /// Assembles the handler and decides which tools exist.
     ///
-    /// `status`/`control`/`storage` は任意。渡すとそれぞれ追加ツールが有効になる:
-    /// - `status`: `connection_status` ツールを公開（受信機の健全性）。
-    /// - `control`: `restart_receiver` ツールを公開（リスナー再起動）。
-    /// - `storage`: `get_storage_info` ツールを公開（件数・使用バイト数）。
+    /// The three optional ports each add a tool when supplied and leave it out of `tools/list`
+    /// when not:
+    /// - `status`: `connection_status`, reporting receiver health.
+    /// - `control`: `restart_receiver`, rebuilding the listener. Supplying both this and `status`
+    ///   also lets a dead listener be revived automatically before a tool runs.
+    /// - `storage`: `get_storage_info`, reporting count and bytes used.
     public init(
         store: any RecordStore,
         name: String = "ios-recorder",
@@ -33,7 +35,14 @@ public actor MCPRequestHandler {
         self.storage = storage
     }
 
-    /// JSON-RPC リクエスト 1 件を処理。通知（応答不要）なら nil。
+    /// Handles one request and returns the bytes to write back.
+    ///
+    /// `nil` means write nothing: the message was a notification, or it carried no `method` at all.
+    /// A caller that was waiting on an id in that second case waits forever.
+    ///
+    /// Failures are not uniform: a missing or malformed argument comes back as a JSON-RPC error, a
+    /// capture or event that is not there comes back as a result marked `isError`, and a store that
+    /// fails for any other reason comes back as an ordinary empty result.
     public func handle(_ requestData: Data) async -> Data? {
         guard let object = try? JSONSerialization.jsonObject(with: requestData) as? [String: Any] else {
             return Self.encode(["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "parse error"]])
@@ -167,8 +176,11 @@ public actor MCPRequestHandler {
             ]
     }
 
-    /// ツール実行直前のセーフティネット: listener が落ちている時だけ無言で貼り直す。
-    /// 健全な時は何もしない（port チャーンで in-flight を壊さないため無条件にはしない）。
+    /// Revives a dead listener before a tool runs, quietly, so that a dropped receiver does not
+    /// turn into an empty answer the model has no way to interpret.
+    ///
+    /// Deliberately conditional: restarting a healthy listener would churn the port and break
+    /// transfers already in flight.
     private func autoRecoverIfNeeded() async {
         guard let status, let control else { return }
         if await status.status().listening == false {
@@ -314,8 +326,11 @@ public actor MCPRequestHandler {
         return query
     }
 
-    /// 検索結果のイベント要約（payload 本文なし・メタのみ）と走査の事実。
-    /// 打ち切りを黙らせない: scanTruncated=true は「見つからない ≠ 存在しない」のサイン。
+    /// Renders hits as metadata only — payloads are reduced to a byte count, so a search over a
+    /// hundred events costs a hundred lines rather than a hundred prompts.
+    ///
+    /// Carries `scanTruncated` alongside, which is the difference between "there is no such event"
+    /// and "we stopped looking"; without it a truncated scan reads as a confident nothing.
     private static func searchResultJSON(_ result: DebugEventSearchResult) -> String {
         let hits = result.hits.map { hit -> [String: Any] in
             var dict = eventDictionary(hit.event, captureID: hit.captureID.rawValue)
@@ -346,7 +361,8 @@ public actor MCPRequestHandler {
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// イベント 1 件の完全表現（payload 全文込み）。
+    /// The whole event, payload included. A payload that is valid UTF-8 is returned as text and
+    /// honours `maxBytes`; anything else is base64 under a separate key and is not capped.
     private static func eventJSON(_ event: DebugEvent, captureID: String, maxBytes: Int?) -> String {
         var dict = eventDictionary(event, captureID: captureID)
         if let payload = event.payload {
@@ -432,8 +448,11 @@ public actor MCPRequestHandler {
         return content
     }
 
-    /// 非画像 artifact のテキスト本文。network/debug_timeline は読み出し時にサニタイズする
-    /// （バイナリ応答ボディの省略・base64 payload の除去）。それ以外は従来どおり。
+    /// Text for a non-image artifact, thinned out on the way out rather than on the way in: network
+    /// entries lose binary response bodies and timeline entries lose their base64 payloads, while
+    /// what is on disk keeps everything.
+    ///
+    /// Any other kind is returned as its own text, or as base64 when the media type is not textual.
     private static func bodyText(for artifact: Artifact) -> String {
         switch artifact.kind.rawValue {
         case "network":
@@ -449,8 +468,12 @@ public actor MCPRequestHandler {
             : "base64(\(artifact.mediaType)): " + artifact.data.base64EncodedString()
     }
 
-    /// network artifact の各エントリで、Content-Type が非テキスト（画像/動画/バイナリ）の
-    /// responseBody をプレースホルダに置換する。token を食う mojibake を AI に渡さない。
+    /// Replaces every response body whose Content-Type is not text with a placeholder naming its
+    /// type and size. A downloaded image decoded as text is pages of mojibake that costs thousands
+    /// of tokens and says nothing.
+    ///
+    /// Returns `nil` when the artifact is not the expected array of entries, which leaves the
+    /// caller to fall back to the raw text.
     private static func sanitizedNetworkJSON(_ data: Data) -> String? {
         guard var entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
         for index in entries.indices {
@@ -466,8 +489,11 @@ public actor MCPRequestHandler {
         return String(decoding: out, as: UTF8.self)
     }
 
-    /// debug_timeline artifact の各イベントから、summary と冗長な base64 `payload` を除去する。
-    /// summary が人間/AI 可読な要約を持つため payload は MCP 出力では不要。
+    /// Drops the base64 `payload` from every event, leaving the summary to carry the meaning.
+    /// Whoever needs the full text asks for that one event by id.
+    ///
+    /// Returns `nil` when the artifact is not the expected array of events, which leaves the caller
+    /// to fall back to the raw text.
     private static func strippedTimelineJSON(_ data: Data) -> String? {
         guard var events = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
         for index in events.indices {
@@ -490,13 +516,16 @@ public actor MCPRequestHandler {
 
     private static func isTextualContentType(_ contentType: String) -> Bool {
         let lower = contentType.lowercased()
-        if lower.isEmpty { return true }   // 不明な時は保持（過剰省略を避ける）
+        if lower.isEmpty { return true }   // Unknown type: keep it rather than elide something readable
         if lower.hasPrefix("text/") { return true }
         return lower.contains("json") || lower.contains("xml") || lower.contains("javascript")
             || lower.contains("html") || lower.contains("csv") || lower.contains("x-www-form-urlencoded")
     }
 
-    /// UTF-8 バイト数で上限を超えたテキストを truncate する（最後の安全網）。
+    /// Cuts text to a UTF-8 byte budget and says how much was dropped — the last line of defence
+    /// against one artifact filling a context window.
+    ///
+    /// The cut is on a byte boundary, so a multi-byte character landing on it becomes U+FFFD.
     private static func cap(_ text: String, maxBytes: Int) -> String {
         let utf8 = Array(text.utf8)
         guard utf8.count > maxBytes else { return text }

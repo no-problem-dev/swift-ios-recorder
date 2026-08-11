@@ -3,9 +3,10 @@ import DesignSystem
 import StructuredDataCore
 import JSONParsing
 
-/// 任意の構造データ（`StructuredValue`）を再帰的に折り畳み表示する汎用ビュー。
-/// 既定はコンパクト: トップレベルだけ展開し、深い階層は折り畳み、大量の子はバッチで開示、
-/// 長い文字列リーフはプレビュー + 全文展開。巨大 payload でも一覧性と性能を守る。
+/// Renders any `StructuredValue` as a recursively collapsible tree.
+/// It opens compact — only the top level expanded, deeper levels folded, long child lists revealed a
+/// batch at a time, long string leaves shown as a preview with a full-text toggle — so even a huge
+/// payload stays readable and keeps scrolling.
 struct StructuredValueView: View {
     let value: StructuredValue
     var depth: Int = 0
@@ -48,13 +49,14 @@ struct StructuredValueView: View {
         }
     }
 
-    /// JSON データをパースして表示。JSON でなければ nil（呼び出し側がテキスト表示にフォールバック）。
+    /// Parses data for display as a tree.
+    /// - Returns: `nil` when the data is not JSON, which is the caller's cue to fall back to plain text.
     static func parse(_ data: Data) -> StructuredValue? {
         try? JSONParser().parse(data)
     }
 }
 
-/// オブジェクト/配列なら折り畳み、葉なら 1 行で表示するノード。
+/// A disclosure group for an object or an array, a single line for anything else.
 private struct StructuredNodeRow: View {
     let key: String
     let value: StructuredValue
@@ -96,8 +98,8 @@ private struct StructuredNodeRow: View {
     }
 }
 
-/// 葉（string/number/bool/null）の 1 行表示。型ごとに色分け（JSON シンタックスハイライト）。
-/// 長い文字列はプレビューに畳み、タップで全文展開。
+/// One line for a string, number, bool or null, colored by type the way JSON highlighting does.
+/// A long string is folded to a preview with a tap to see all of it.
 private struct StructuredLeaf: View {
     let key: String?
     let value: StructuredValue

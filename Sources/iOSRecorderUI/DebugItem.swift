@@ -1,7 +1,7 @@
 import Foundation
 
-/// アプリがデバッグパネルに登録できる項目。アクション / トグル / 情報表示の 3 種。
-/// これでフィーチャーフラグや環境切替などを計器の導線に差し込める。
+/// A row the app registers in the debug panel: an action to run, a toggle to flip, or a value to read.
+/// This is how feature flags and environment switches get a place in the debug UI.
 public struct DebugItem: Identifiable, Sendable {
     public let id: String
     public let title: String

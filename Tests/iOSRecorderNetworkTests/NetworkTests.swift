@@ -61,7 +61,7 @@ import iOSRecorder
         let masked = NetworkLogSanitizer.maskURL(url)
         #expect(masked.contains("key=***"))
         #expect(masked.contains("SECRET123") == false)
-        #expect(masked.contains("alt=sse"))   // 非機密はそのまま
+        #expect(masked.contains("alt=sse"))   // Ordinary parameters survive untouched
     }
 
     @Test func leavesURLWithoutQueryUntouched() {
@@ -148,7 +148,7 @@ import iOSRecorder
         #expect(artifact?.attributes["count"] == "1")
         let json = String(decoding: artifact!.data, as: UTF8.self)
         #expect(json.contains("api.example.com/users"))
-        #expect(json.contains("***"))            // 機密ヘッダがマスクされている
+        #expect(json.contains("***"))            // The capture path masked the header
         #expect(json.contains("Bearer secret") == false)
     }
 
@@ -198,7 +198,7 @@ import iOSRecorder
         #expect(masked.contains("sk-12345") == false)
         #expect(masked.contains("hunter2") == false)
         #expect(masked.contains(#""apiKey":"***""#))
-        #expect(masked.contains(#""prompt":"hello world""#))   // 非機密はそのまま
+        #expect(masked.contains(#""prompt":"hello world""#))   // Ordinary keys survive untouched
         #expect(masked.contains(#""count":3"#))
     }
 
@@ -220,7 +220,7 @@ import iOSRecorder
     }
 
     @Test func elidesSniffedBinaryWhenContentTypeMissing() {
-        // Content-Type なし + 置換文字（U+FFFD）混じり = バイナリを誤ってテキスト化したもの
+        // No Content-Type, and U+FFFD scattered through it: binary that was decoded as text.
         let mojibake = "PNG\u{FFFD}\u{FFFD}\u{FFFD}data"
         let redacted = NetworkLogSanitizer.redactBody(mojibake, contentType: nil, contentLength: "12345")
         #expect(redacted?.contains("elided") == true)

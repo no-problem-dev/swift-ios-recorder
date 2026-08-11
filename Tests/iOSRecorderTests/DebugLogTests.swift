@@ -60,7 +60,8 @@ private func event(_ category: String, _ name: String, _ summary: String = "x", 
         let artifact = await source.measure(ctx)
         let json = String(decoding: artifact!.data, as: UTF8.self)
         #expect(json.contains("in 13312 / out 12 tok"))
-        // payload は capture に同梱され、開示の段階制御は読み出し側（MCP）が担う。
+        // The payload travels inside the capture; deciding how much of it to reveal is the
+        // reader's job, not the writer's.
         #expect(json.contains("payload"))
         #expect(json.contains("payloadType"))
     }
@@ -79,7 +80,8 @@ private func event(_ category: String, _ name: String, _ summary: String = "x", 
     }
 }
 
-/// テスト用: カテゴリごとのイベント数を数えるだけの抽出器。
+/// Smallest possible extractor — one count per category — so the test measures the source's
+/// plumbing rather than any real extractor's arithmetic.
 private struct CountByCategoryExtractor: MetricExtractor {
     func metrics(from events: [DebugEvent]) -> [DebugMetric] {
         Dictionary(grouping: events, by: \.category).map { category, group in

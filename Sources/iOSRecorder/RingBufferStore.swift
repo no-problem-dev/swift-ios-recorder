@@ -1,6 +1,10 @@
 import Foundation
 
-/// オンデバイスの保持実装。件数とバイト数の両方で容量を制御し、超えたら最古を退避する。
+/// Keeps recent captures in memory only, bounded by a record count and a byte budget at the same time.
+///
+/// Nothing reaches disk, so everything is gone when the process ends — use a file-backed store when captures
+/// have to survive a relaunch. Whichever limit is hit first evicts the oldest captures, and ``fetch(_:)`` on an
+/// evicted id throws ``RecordStoreError/notFound(_:)``.
 public actor RingBufferStore: RecordStore {
     private var storage: [RecordID: Record] = [:]
     private var order: [RecordID] = []
@@ -9,9 +13,10 @@ public actor RingBufferStore: RecordStore {
     private let capacityBytes: Int
 
     /// - Parameters:
-    ///   - capacity: 保持する最大件数。
-    ///   - capacityBytes: artifact data 合計の上限。screenshot 等の不均等な肥大でも
-    ///     メモリを食い潰さないための歯止め。最新 1 件は予算超過でも保持する。
+    ///   - capacity: Most captures to keep.
+    ///   - capacityBytes: Ceiling on the summed artifact bytes. Screenshots dwarf everything else, so this is
+    ///     the limit that actually stops the buffer from eating memory. The newest capture is always kept,
+    ///     even when it exceeds the budget on its own.
     public init(capacity: Int = 100, capacityBytes: Int = 64_000_000) {
         self.capacity = max(1, capacity)
         self.capacityBytes = max(1, capacityBytes)

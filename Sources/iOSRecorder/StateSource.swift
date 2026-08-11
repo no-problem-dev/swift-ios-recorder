@@ -1,7 +1,9 @@
 import Foundation
 
-/// アプリの state を JSON として計測する Source。
-/// 値は measure 時点で評価される（クロージャ渡し）。
+/// Captures app state as JSON, read at the moment of capture rather than when the source was built.
+///
+/// Always produces an artifact, even for empty data — use ``TypedStateSource`` when a capture should be able to
+/// skip the state entirely.
 public struct StateSource: Source {
     public let kind = ArtifactKind.state
     private let provider: @Sendable () async -> Data
@@ -10,7 +12,9 @@ public struct StateSource: Source {
         self.provider = provider
     }
 
-    /// Encodable な値を measure 時点で JSON 化する。
+    /// Encodes whatever the provider returns, at the moment of capture.
+    ///
+    /// A value that fails to encode is recorded as `{}`, which is indistinguishable from genuinely empty state.
     public init<Value: Encodable & Sendable>(encoding provider: @escaping @Sendable () async -> Value) {
         self.provider = {
             let value = await provider()

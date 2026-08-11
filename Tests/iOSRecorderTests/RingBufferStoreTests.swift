@@ -72,7 +72,7 @@ import iOSRecorderTestSupport
         let store = RingBufferStore(capacity: 100, capacityBytes: 250)
         try await store.save(record("a", bytes: 100, at: 1))
         try await store.save(record("b", bytes: 100, at: 2))
-        try await store.save(record("c", bytes: 100, at: 3))   // 300 > 250 → a を退避
+        try await store.save(record("c", bytes: 100, at: 3))   // 300 over a 250 budget, so "a" goes
 
         let all = try await store.query(RecordQuery())
         #expect(all.map(\.id.rawValue) == ["c", "b"])
@@ -91,8 +91,8 @@ import iOSRecorderTestSupport
     @Test func resavingSameIDDoesNotDoubleCountBytes() async throws {
         let store = RingBufferStore(capacity: 100, capacityBytes: 250)
         try await store.save(record("a", bytes: 100, at: 1))
-        try await store.save(record("a", bytes: 100, at: 1))   // 上書き = 100 bytes のまま
-        try await store.save(record("b", bytes: 100, at: 2))   // 合計 200 ≤ 250 → 退避なし
+        try await store.save(record("a", bytes: 100, at: 1))   // Overwrite, so still 100 bytes
+        try await store.save(record("b", bytes: 100, at: 2))   // 200 within budget, so nothing is evicted
         let all = try await store.query(RecordQuery())
         #expect(all.count == 2)
     }

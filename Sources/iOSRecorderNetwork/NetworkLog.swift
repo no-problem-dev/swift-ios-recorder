@@ -1,6 +1,11 @@
 import Foundation
 
-/// 1 件の HTTP 通信ログ。メモリ上のライブバッファに積まれる。
+/// One intercepted HTTP exchange, as buffered live in memory.
+///
+/// The buffer dies with the process; nothing here reaches disk or the wire until a capture folds it
+/// in, and only ever through `redacted()`. A buffered value is not safe to hand out as-is: the
+/// interceptor masks header values as it captures, but the URL query and both bodies still hold
+/// whatever the app sent.
 public struct NetworkLog: Identifiable, Sendable, Codable, Equatable {
     public let id: UUID
     public let method: String
@@ -49,14 +54,20 @@ public struct NetworkLog: Identifiable, Sendable, Codable, Equatable {
         return false
     }
 
-    /// URL のパス部分（一覧表示用）。
+    /// Path alone, for list rows too narrow for the whole URL. Falls back to the full URL string
+    /// when it cannot be parsed, so this is never empty.
     public var path: String {
         URLComponents(string: url)?.path ?? url
     }
 
-    /// 機密ヘッダをマスクし、ボディをサニタイズした安全な複製。
-    /// Record/Bonjour/MCP へ外に出す前に必ず通す。テキストボディは truncate、
-    /// 非テキスト（画像/動画/バイナリ）ボディはサイズ付きプレースホルダに省略する。
+    /// A copy safe to leave the device: secrets masked in headers, query and JSON bodies, text
+    /// bodies truncated, and non-text bodies replaced by a placeholder that keeps only their size.
+    ///
+    /// - Important: Every path out — capture, transfer, MCP — must go through this. It is the only
+    ///   step that masks an API key sitting in the query string or in a JSON body.
+    ///
+    /// - Parameter bodyLimit: Characters of text body to keep. Anything past it is dropped and
+    ///   noted in the text itself; binary bodies are elided regardless of this.
     public func redacted(bodyLimit: Int = 4096) -> NetworkLog {
         NetworkLog(
             id: id,

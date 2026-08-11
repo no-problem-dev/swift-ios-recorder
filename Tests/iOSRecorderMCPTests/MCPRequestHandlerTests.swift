@@ -185,8 +185,8 @@ import iOSRecorderTestSupport
         ])
         let content = (response?["result"] as? [String: Any])?["content"] as? [[String: Any]]
         let text = content?.compactMap { $0["text"] as? String }.first { $0.contains("debug_timeline") }
-        #expect(text?.contains("web_search call") == true)   // summary は残る
-        #expect(text?.contains("payload") == false)          // payload / payloadType は消える
+        #expect(text?.contains("web_search call") == true)   // The summary carries the meaning
+        #expect(text?.contains("payload") == false)          // Both payload and payloadType are gone
         #expect(text?.contains(Data("SECRETPAYLOAD".utf8).base64EncodedString()) == false)
     }
 

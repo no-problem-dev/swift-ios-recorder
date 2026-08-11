@@ -1,11 +1,13 @@
 import Foundation
 
-/// 任意の `Encodable` 値を計測する汎用 Source。`StateSource` との違いは 2 つ:
-/// - 値の Swift 型名を `attributes["type"]` に刻む（MCP/消費者が型で識別できる）
-/// - `kind` を指定できる（既定 `.state`。`ArtifactKind(rawValue: "agent_response")` 等で
-///   族ごとに分けると `RecordQuery.kinds` 経由でそのまま絞り込める）
+/// Captures any encodable value, tagged with its Swift type name and a kind of the app's choosing.
 ///
-/// provider が `nil` を返した瞬間は artifact を作らない（その回の計測をスキップ）。
+/// Two things it adds over ``StateSource``:
+/// - the value's Swift type name lands in `attributes["type"]`, so a consumer can tell payloads apart
+/// - the kind is yours to pick, and giving a family its own kind makes ``RecordQuery/kinds`` a usable filter
+///
+/// A provider returning `nil` skips that capture rather than writing an empty artifact. A value that fails to
+/// encode is recorded as `{}`.
 public struct TypedStateSource<Value: Encodable & Sendable>: Source {
     public let kind: ArtifactKind
     private let typeName: String

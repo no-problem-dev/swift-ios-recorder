@@ -2,52 +2,29 @@ English | [日本語](./README.ja.md)
 
 # swift-ios-recorder
 
-An on-device instrument that **captures and retains** the runtime state of iOS apps under development — screenshots, state JSON, and logs bundled as a single capture — and streams them to Mac, MCP servers, and AI tools, eliminating manual UI verification loops.
+Shows what your iOS app is actually doing — the screen, the app's own state, its network traffic and its logs — to an AI coding agent on your Mac, so checking a UI change stops being a manual tap-and-screenshot loop.
 
 ![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)
 ![Platforms](https://img.shields.io/badge/Platforms-iOS%2017.0+%20%7C%20macOS%2014.0+-blue.svg)
 ![SPM](https://img.shields.io/badge/Swift_Package_Manager-compatible-brightgreen.svg)
 
-## Core Idea
+## Overview
 
-**Measure + retain is the foundation.** Mac integration and MCP integration are capabilities built on top.
-See [spec.md](./spec.md) for the detailed design.
+One modifier on your root view gives a build a floating button. Tap it — or shake the
+device — and the app takes a capture: a screenshot, whatever application state you chose
+to encode, recent HTTP traffic, and recent logs, all filed under a single timestamp.
 
-## Modules
+Captures travel to a Mac on the same network as they are taken. Register the companion
+executable as an MCP server and a coding agent can list them, open them, and search their
+events, so it can look at the screen it just changed instead of asking you to describe it.
 
-| Module | Role |
-|---|---|
-| `iOSRecorder` | Core. `Record` / `Artifact` / ports / `Session` / `RingBufferStore` / `Log` & `StateSource` (zero dependencies) |
-| `iOSRecorderScreenshot` | `ScreenshotSource` (UIKit `drawHierarchy`, iOS only) |
-| `iOSRecorderUI` | SwiftUI integration (floating button, shake-to-capture, in-app viewer) |
-| `iOSRecorderBonjour` | `Exporter` / `Receiver` (same-LAN instant transfer, Network framework) |
-| `iOSRecorderStore` | `RecordStore` file implementation (Mac, 1 record = 1 folder) |
-| `iOSRecorderMCP` | Bridges `RecordStore` to `list_captures` / `get_capture` / `search_events` / `get_event` (MCP stdio) |
-| `ios-recorder` | Mac companion executable (`serve` / `mcp`) |
-
-## Installation
-
-```swift
-// Package.swift
-dependencies: [
-    .package(url: "https://github.com/no-problem-dev/swift-ios-recorder.git", .upToNextMinor(from: "0.6.0"))
-]
-```
-
-```swift
-.target(name: "YourTarget", dependencies: [
-    .product(name: "iOSRecorder", package: "swift-ios-recorder"),           // core (measure + retain)
-    .product(name: "iOSRecorderUI", package: "swift-ios-recorder"),         // SwiftUI integration
-    .product(name: "iOSRecorderScreenshot", package: "swift-ios-recorder"), // screenshot capture (iOS)
-    .product(name: "iOSRecorderBonjour", package: "swift-ios-recorder"),    // same-LAN transfer to Mac
-])
-```
-
-The Mac companion (`ios-recorder` executable) is built from this repository with `swift build`.
+Every source is opt-in: take screenshots only, or add state, network and logs as you need
+them. Captures can also be browsed inside the app, which is what you get when there is no
+Mac listening. Nothing here is meant to ship — compile it into debug builds only.
 
 ## Usage
 
-### iOS app side (DEBUG builds only)
+### In the iOS app
 
 ```swift
 import iOSRecorder
@@ -62,35 +39,63 @@ let session = Session(
         StateSource(encoding: { await appState.snapshot() })
     ],
     store: store,
-    exporters: [BonjourExporter()]   // stream to Mac over the same LAN
+    exporters: [BonjourExporter()]   // send to a Mac on the same network
 )
 let controller = RecorderController(session: session, store: store)
 
-// One line at the root. Tap/shake to capture, long-press to list.
+// One line at the root. Tap or shake to capture, long-press to browse.
 ContentView().recorder(controller)
 ```
 
-### Mac side
+`BonjourExporter` discovers the Mac with a Bonjour browse, so the app needs the local
+network permission and an `NSLocalNetworkUsageDescription` string in its `Info.plist`.
+Until that is granted the capture is still taken and stored — it just never leaves the
+device.
+
+### On the Mac
 
 ```sh
-# Register as an MCP server in Claude Code. The receiver runs inside the MCP process,
-# starting and stopping with Claude Code — no separate daemon needed.
 claude mcp add ios-recorder -- ios-recorder mcp
 ```
 
-Once registered, pressing the floating button on iPhone sends a capture to the Mac,
-and Claude Code can retrieve it via `list_captures` / `get_capture` (images downscaled to `maxDimension`)
-/ `search_events` / `get_event` / `delete_capture` / `clear_captures`.
+The receiver runs inside the MCP process, so it starts and stops with the agent and there
+is no separate daemon to keep alive. Once registered, pressing the button on the phone
+puts a capture where the agent can reach it through `list_captures`, `get_capture`,
+`search_events` and `get_event`. For headless use, `ios-recorder serve` runs the receiver
+on its own.
 
-`ios-recorder serve` is an alternative for headless operation that runs only the receiver.
+> After replacing the binary, re-sign it with `codesign --force --sign - <path>`. Copying
+> over it invalidates the ad-hoc signature, and the process is then killed at launch.
 
-> After updating the binary, re-sign it with `codesign --force --sign - <path>`.
-> Without re-signing, the ad-hoc signature is invalidated and the process is killed at launch with SIGKILL.
+## Documentation
 
-## Development
+[API documentation](https://no-problem-dev.github.io/swift-ios-recorder/documentation/iosrecorder/)
 
-```sh
-swift build && swift test          # 48 tests / 13 suites
-# Verify compile for iOS-only targets:
-xcodebuild build -scheme iOSRecorderUI -destination 'generic/platform=iOS'
+## Installation
+
+```swift
+// Package.swift
+dependencies: [
+    .package(url: "https://github.com/no-problem-dev/swift-ios-recorder.git", .upToNextMinor(from: "0.6.0"))
+]
 ```
+
+```swift
+.target(name: "YourTarget", dependencies: [
+    .product(name: "iOSRecorder", package: "swift-ios-recorder"),           // core
+    .product(name: "iOSRecorderUI", package: "swift-ios-recorder"),         // SwiftUI integration
+    .product(name: "iOSRecorderScreenshot", package: "swift-ios-recorder"), // screenshots
+    .product(name: "iOSRecorderBonjour", package: "swift-ios-recorder"),    // transfer to a Mac
+])
+```
+
+The Mac companion is the `ios-recorder` executable, built from this repository with
+`swift build`.
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+## License
+
+MIT. See [LICENSE](./LICENSE).

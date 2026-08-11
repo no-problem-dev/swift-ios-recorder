@@ -1,8 +1,10 @@
 import Foundation
 import Observation
 
-/// デバッグイベントのライブな順序付きバッファ。`NetworkLogStore` と同じく @Observable なので
-/// SwiftUI でそのままストリーミング表示でき、`DebugLogSource` が capture 時に snapshot する。
+/// The live, ordered buffer every debug event flows into, observable so SwiftUI streams it with no extra plumbing.
+///
+/// Bound to the main actor, so a background task has to hop before emitting. Once `capacity` is reached the
+/// oldest events are dropped, and a capture only ever sees what is left.
 @MainActor
 @Observable
 public final class DebugLog {
@@ -20,12 +22,13 @@ public final class DebugLog {
         }
     }
 
-    /// 指定カテゴリのイベントだけを古い順に返す。
+    /// Events from one category, in the order they arrived.
     public func events(in category: String) -> [DebugEvent] {
         events.filter { $0.category == category }
     }
 
-    /// 登場したカテゴリの一覧（出現順）。
+    /// Categories present in the buffer right now, in order of first appearance — a category vanishes once its
+    /// last event is evicted.
     public var categories: [String] {
         var seen: Set<String> = []
         var ordered: [String] = []
@@ -38,10 +41,14 @@ public final class DebugLog {
     public func clear() { events.removeAll() }
 }
 
-/// ドメインのイベント源を購読し、DebugEvent として `DebugLog` に流し込む生産者。
-/// network/agent/a2ui/任意構造体 はすべてこのプロトコルの実装として揃える。
+/// Subscribes to one source of domain events and feeds them into a log as normalized entries.
+///
+/// Network traffic, agent steps, generated surfaces, and anything bespoke all arrive the same way, which is what
+/// keeps the timeline a single list instead of one view per subsystem.
 public protocol DebugProbe: Sendable {
     var category: String { get }
-    /// 購読を開始し、以降ドメインイベントを `log` に emit し続ける。
+    /// Starts the subscription and keeps emitting into `log` for as long as the source produces events.
+    ///
+    /// There is no counterpart that stops it, so attach a probe once and let it live as long as the log does.
     @MainActor func attach(to log: DebugLog)
 }

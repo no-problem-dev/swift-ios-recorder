@@ -1,8 +1,9 @@
 import SwiftUI
 
 public extension View {
-    /// 画面に名前を付ける。表示中はその名前が撮影に自動付与され、一覧・検索で識別できる。
-    /// `.recorder(controller)` の内側で使うこと（controller を環境から取得する）。
+    /// Names a screen, so captures taken while it is showing carry that name in the list and in search.
+    /// Use it inside `.recorder(_:)`: outside, the controller is missing from the environment and the
+    /// name is dropped without a warning.
     func recorderScreen(_ name: String) -> some View {
         modifier(RecorderScreenModifier(name: name))
     }

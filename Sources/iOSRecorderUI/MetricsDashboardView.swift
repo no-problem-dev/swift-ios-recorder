@@ -3,8 +3,8 @@ import Charts
 import DesignSystem
 import iOSRecorder
 
-/// 任意のメトリクス（利用側が差し込む `MetricsReport`）を、利用側定義の表示軸・色分けで
-/// リッチに可視化する汎用ダッシュボード。ドメイン非依存（整形は `MetricSeries.format` に委譲）。
+/// Visualizes a `MetricsReport` supplied by the app, along the axes and color indices that report declares.
+/// It knows nothing about the domain: every number is turned into text by `MetricSeries.format`.
 public struct MetricsDashboardView: View {
     let store: MetricsStore
     @State private var selection: [String: String] = [:]
@@ -115,7 +115,8 @@ public struct MetricsDashboardView: View {
     }
 }
 
-/// パレット（color index → 色）。データ可視化用の固定ハイカラー（テーマ非依存で識別性優先）。
+/// Turns a color index into a fixed high-contrast color, chosen for telling series apart rather than
+/// for matching the theme, and wrapping round for indices past the end.
 func metricColor(_ index: Int) -> Color {
     let palette: [Color] = [.blue, .green, .orange, .purple, .pink, .teal, .red, .indigo, .mint, .cyan]
     return palette[((index % palette.count) + palette.count) % palette.count]

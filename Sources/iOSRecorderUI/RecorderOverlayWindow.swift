@@ -4,8 +4,8 @@ import UIKit
 import DesignSystem
 import iOSRecorder
 
-/// ボタンの矩形だけタッチを拾い、それ以外はアプリ本体へ通すウィンドウ。
-/// シート表示中（presentedViewController あり）は通常通り全面で当たり判定する。
+/// Takes touches only inside the buttons' rectangle and lets every other touch fall through to the app.
+/// While it presents a sheet it hit-tests across its whole area again, so the panel stays usable.
 final class PassthroughWindow: UIWindow {
     let hitRegion: HitRegionBox
 
@@ -25,7 +25,8 @@ final class PassthroughWindow: UIWindow {
     }
 }
 
-/// アプリの windowScene を捕まえて、フロートボタン専用の非 key ウィンドウを 1 度だけ載せる。
+/// Waits for the app's window scene, then installs the buttons' own window exactly once and keeps it
+/// for the lifetime of the scene.
 struct OverlayInstaller: UIViewRepresentable {
     let controller: RecorderController
 
@@ -54,7 +55,7 @@ struct OverlayInstaller: UIViewRepresentable {
             let host = UIHostingController(rootView: FloatingButtons(controller: controller, hitRegion: region).theme(controller.theme))
             host.view.backgroundColor = .clear
             window.rootViewController = host
-            window.isHidden = false   // 表示するが makeKey しない → アプリ本体が key window のまま
+            window.isHidden = false   // shown but never made key, so the app keeps the key window screenshots look for
             self.window = window
         }
     }

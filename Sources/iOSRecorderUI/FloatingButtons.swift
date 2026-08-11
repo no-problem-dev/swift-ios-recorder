@@ -1,12 +1,12 @@
 import SwiftUI
 import iOSRecorder
 
-/// パススルーウィンドウが「ここだけ触れる」と判定するための共有矩形（ウィンドウ座標）。
+/// The one rectangle the passthrough window treats as touchable, in window coordinates.
 final class HitRegionBox: @unchecked Sendable {
     var frame: CGRect = .zero
 }
 
-/// 右下に縦並びで常駐する Liquid Glass ボタン群。📷 撮影 / 🐞 メニュー。
+/// Liquid Glass buttons stacked at the bottom right — 📷 captures, 🐞 opens the panel — draggable anywhere.
 struct FloatingButtons: View {
     @Bindable var controller: RecorderController
     var hitRegion: HitRegionBox? = nil
@@ -16,7 +16,7 @@ struct FloatingButtons: View {
     var body: some View {
         GeometryReader { geo in
             let center = clusterCenter(in: geo.size)
-            // 観測を body の追跡スコープ直下で行い、撮影後のバッジ更新を確実にする
+            // Read the count inside body's tracking scope, or the badge misses the update after a capture
             let badgeCount = controller.summaries.count
             if controller.isOverlayVisible {
                 cluster(badgeCount: badgeCount)
@@ -38,7 +38,7 @@ struct FloatingButtons: View {
         }
         .ignoresSafeArea()
         .onChange(of: controller.isOverlayVisible) { _, visible in
-            // 非表示中は透明ウィンドウがタッチを奪わないよう、当たり判定を消す。
+            // While hidden, clear the hit region so the transparent window stops stealing touches.
             if !visible { hitRegion?.frame = .zero }
         }
         .sheet(isPresented: $controller.isPresentingPanel) {
@@ -47,7 +47,7 @@ struct FloatingButtons: View {
         .task { await controller.refresh() }
     }
 
-    /// クラスタの実フレーム（移動後）をウィンドウへ通知する。
+    /// Reports where the buttons actually sit, drag included, so the window knows which touches to take.
     private var regionReporter: some View {
         GeometryReader { proxy in
             Color.clear

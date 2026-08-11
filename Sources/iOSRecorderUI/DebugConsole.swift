@@ -3,8 +3,8 @@ import DesignSystem
 import iOSRecorder
 import iOSRecorderNetwork
 
-/// デバッグパネルの画面構成スペック。利用側がセクションの種類・順序・配置を宣言的に決める。
-/// 「何をどの順でどう配置するか」を利用側に完全に委ねるための SSOT（AWS コンソール的な構成）。
+/// Declares which sections the debug panel shows, in what order, and how each one is laid out.
+/// Holding that decision in one value keeps it out of the panel's views, where it would be scattered.
 public struct DebugConsole {
     public var sections: [DebugSection]
 
@@ -17,7 +17,7 @@ public struct DebugConsole {
     }
 }
 
-/// 構成の 1 区画。種類（content）と表示メタ（タイトル・アイコン・レイアウト）＋プレビューを持つ。
+/// One region of the panel: what it shows, how it is titled and laid out, and what it reveals before being tapped.
 public struct DebugSection: Identifiable {
     public enum Layout: Sendable { case card, navigationLink, inline }
 
@@ -26,7 +26,7 @@ public struct DebugSection: Identifiable {
     let icon: String?
     let layout: Layout
     let content: Content
-    /// 動線カードに出す「タップ前の覗き見」。空なら見出しのみ。
+    /// Peek shown on the card before it is tapped; an empty array leaves only the header row.
     let preview: [DebugPreviewElement]
 
     enum Content {
@@ -38,9 +38,9 @@ public struct DebugSection: Identifiable {
         case items([DebugItem])
         case statGrid(columns: Int, stats: [DebugStat])
         case custom(AnyView)
-        /// 手元データの掃除・再送（ライブ件数付きの操作セット）。
+        /// Clearing on-device data and retrying sends, each row carrying a live count.
         case maintenance(DebugLog?, NetworkLogStore?, (any OutboxDraining)?)
-        /// 任意画面への動線カード（デザインカタログ等）。
+        /// Card that pushes to any screen the app supplies, such as a component catalog.
         case screen(AnyView, tint: Color)
     }
 
@@ -54,9 +54,9 @@ public struct DebugSection: Identifiable {
     }
 }
 
-// MARK: - プレビュー語彙（タップ前に出す覗き見プリミティブ）
+// MARK: - Preview vocabulary (what a card may reveal before it is tapped)
 
-/// 動線カードの状態ピル。問題スセント（警告・エラー）を一目で見せる。
+/// Health of a section at a glance, so a warning or an error is visible without opening the card.
 public enum PreviewStatus: Sendable {
     case ok
     case warning(Int)
@@ -64,7 +64,7 @@ public enum PreviewStatus: Sendable {
     case neutral(String)
 }
 
-/// インライン数値タイル 1 つ（ラベル＋整形済み値）。
+/// A label and an already-formatted value; formatting stays with the app that owns the number.
 public struct PreviewStat: Sendable {
     public let label: String
     public let value: String
@@ -74,22 +74,22 @@ public struct PreviewStat: Sendable {
     }
 }
 
-/// プレビューに並べる要素。パッケージがデザインシステムで一貫描画する。
-/// 値はクロージャで、カード body 評価時に @Observable ストアを読めばライブ更新される。
+/// One thing a card may reveal, drawn by the package so every section looks the same.
+/// Each case carries a closure, so reading an `@Observable` store inside it keeps the peek live.
 public enum DebugPreviewElement {
-    /// 状態ピル（見出しへホイスト）。エラー/警告ならアイコンも色付く。
+    /// Health pill, hoisted into the header row; a warning or an error also tints the section icon.
     case status(@MainActor () -> PreviewStatus)
-    /// 最新 1 件の一行サマリ（nil なら「まだなし」）。
+    /// One-line summary of the newest entry; `nil` draws an empty-state line instead.
     case latest(@MainActor () -> String?)
-    /// インライン数値の並び（メトリクスの合計など、タップ不要で見える値）。
+    /// Numbers worth reading without opening the card, such as metric totals.
     case stats(@MainActor () -> [PreviewStat])
-    /// 直近の活動トレンド（極小バー）。全て 0 なら描画しない。
+    /// Recent activity as tiny bars; nothing is drawn when every value is zero.
     case sparkline(@MainActor () -> [Double])
-    /// カテゴリ/タグの覗き見チップ。
+    /// Category or tag chips; an empty array draws nothing.
     case chips(@MainActor () -> [String])
 }
 
-/// StatGrid に並ぶライブ数値タイル 1 枚。
+/// One tile in a stat grid; `value` and `caption` are closures, so every redraw re-reads the app's store.
 public struct DebugStat: Identifiable {
     public let id: String
     let title: String
@@ -114,55 +114,55 @@ public struct DebugStat: Identifiable {
     }
 }
 
-// MARK: - セクションファクトリ（宣言的に並べる）
+// MARK: - Section factories
 
 public extension DebugSection {
-    /// Mac 受信デーモンへの接続状態。
+    /// Connection state of the Mac receiver; draws nothing unless the controller was given a reachability probe.
     static func connection(id: String = "connection") -> DebugSection {
         DebugSection(id: id, title: nil, icon: nil, layout: .card, content: .connection)
     }
 
-    /// メトリクス・ダッシュボードへの導線。既定で合計値をカード上にインライン表示する。
+    /// Way into the metrics dashboard, showing the series totals on the card by default.
     static func metrics(_ store: MetricsStore, id: String = "metrics", title: String = "メトリクス", icon: String = "chart.bar.xaxis", preview: [DebugPreviewElement]? = nil) -> DebugSection {
         DebugSection(id: id, title: title, icon: icon, layout: .navigationLink, content: .metrics(store),
                      preview: preview ?? DebugPreview.metrics(store))
     }
 
-    /// デバッグイベントのタイムライン。`category` を渡すとその関心だけに絞り込む。
-    /// 既定で「状態・最新・活動」をプレビューする。
+    /// Timeline of debug events, narrowed to a single `category` when one is given.
+    /// Unless `preview` says otherwise it reveals health, the newest event and recent activity.
     static func timeline(_ title: String = "Debug ログ", log: DebugLog, category: String? = nil, id: String? = nil, icon: String = "waveform.path.ecg", preview: [DebugPreviewElement]? = nil) -> DebugSection {
         DebugSection(id: id ?? "timeline.\(category ?? "all")", title: title, icon: icon, layout: .navigationLink, content: .timeline(log, category: category),
                      preview: preview ?? DebugPreview.timeline(log, category: category))
     }
 
-    /// 通信ライブモニタ。既定で最新リクエストと成否をプレビューする。
+    /// Live network monitor, revealing the newest request and whether anything failed.
     static func network(_ store: NetworkLogStore, id: String = "network", title: String = "Network", icon: String = "network", preview: [DebugPreviewElement]? = nil) -> DebugSection {
         DebugSection(id: id, title: title, icon: icon, layout: .navigationLink, content: .network(store),
                      preview: preview ?? DebugPreview.network(store))
     }
 
-    /// 記録（キャプチャ）一覧。
+    /// The stored captures, drawn inline rather than behind a card.
     static func captures(id: String = "captures", title: String = "記録") -> DebugSection {
         DebugSection(id: id, title: title, icon: nil, layout: .inline, content: .captures)
     }
 
-    /// アプリが差し込むアクション／トグル／情報の集合。
+    /// Actions, toggles and readouts supplied by the app, gathered into a single card.
     static func items(_ items: [DebugItem], id: String = "items") -> DebugSection {
         DebugSection(id: id, title: nil, icon: nil, layout: .card, content: .items(items))
     }
 
-    /// ひと目で分かる数値タイルのグリッド（AWS コンソール的なウィジェット）。
+    /// Grid of live number tiles, for values worth reading at a glance.
     static func statGrid(_ title: String? = nil, columns: Int = 2, id: String = "stats", icon: String? = nil, @DebugStatBuilder stats: () -> [DebugStat]) -> DebugSection {
         DebugSection(id: id, title: title, icon: icon, layout: .card, content: .statGrid(columns: max(1, columns), stats: stats()))
     }
 
-    /// 任意の利用側ビューを差し込む脱出口。
+    /// Escape hatch for dropping in a view the app already has.
     static func custom<Content: View>(id: String, title: String? = nil, icon: String? = nil, layout: Layout = .card, @ViewBuilder content: () -> Content) -> DebugSection {
         DebugSection(id: id, title: title, icon: icon, layout: layout, content: .custom(AnyView(content())))
     }
 
-    /// 手元データの掃除・再送。渡したストアに応じて操作が並ぶ（ライブ件数付き）:
-    /// イベントログ消去 / 通信ログ消去 / 記録の全削除 / 未送信の再送・破棄 / すべて消去。
+    /// Clears on-device data and retries sends, with one row per store passed in, each showing a live count:
+    /// clear the event log, clear the network log, delete every capture, retry or discard the spool, wipe everything.
     static func maintenance(
         id: String = "maintenance",
         title: String = "メンテナンス",
@@ -174,7 +174,7 @@ public extension DebugSection {
                      content: .maintenance(log, network, outbox))
     }
 
-    /// 任意画面への動線カード。デバッグメニューから開発ツール（カタログ等）へ飛ばす汎用口。
+    /// Card that pushes to any screen, for reaching a development tool from the debug menu.
     static func screen<Destination: View>(
         id: String,
         title: String,
@@ -186,7 +186,7 @@ public extension DebugSection {
                      content: .screen(AnyView(destination()), tint: tint))
     }
 
-    /// デザインシステムのコンポーネントカタログへの動線。
+    /// Way into the design system's component catalog, already titled and tinted.
     static func designSystemCatalog(id: String = "design-catalog", title: String = "デザインカタログ") -> DebugSection {
         screen(id: id, title: title, icon: "paintpalette", tint: .pink) {
             DesignSystemCatalogView()
@@ -194,7 +194,7 @@ public extension DebugSection {
     }
 }
 
-// MARK: - 賢い既定プレビュー（既存データから導出）
+// MARK: - Default previews, derived from data already on hand
 
 enum DebugPreview {
     static func timeline(_ log: DebugLog, category: String?) -> [DebugPreviewElement] {
@@ -229,7 +229,7 @@ enum DebugPreview {
         ]
     }
 
-    // MARK: 導出ヘルパー
+    // MARK: Derivation helpers
 
     static func isError(_ event: DebugEvent) -> Bool {
         event.attributes["isError"] == "true"
@@ -295,10 +295,10 @@ extension DebugLog {
     }
 }
 
-// MARK: - 既定構成（console 未指定時の後方互換）
+// MARK: - Layout used when the app supplies no console
 
 extension DebugConsole {
-    /// controller に存在するストアから既定の構成を組む（旧 DebugPanel の並びを再現）。
+    /// Builds a layout from whichever stores the controller holds, in the panel's original order.
     static func `default`(for controller: RecorderController) -> DebugConsole {
         var sections: [DebugSection] = []
         if controller.reachability != nil { sections.append(.connection()) }

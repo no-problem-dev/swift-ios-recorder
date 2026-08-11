@@ -22,7 +22,9 @@ import Foundation
     }
 
     @Test func truncationRespectsUTF8Boundaries() {
-        // "あ" = 3 bytes。limit 1000 は 3 の倍数でない → 境界を落として有効な UTF-8 に保つ。
+        // Every character here is 3 bytes and 1000 is not a multiple of 3, so the byte limit
+        // lands mid-character.
+        // The straddling character has to be dropped for the payload to stay valid UTF-8.
         let event = DebugEvent(category: "agent", name: "completed", summary: "s",
                                text: String(repeating: "あ", count: 1000))
         let limited = event.withPayloadLimited(to: 1000)
@@ -57,7 +59,8 @@ import Foundation
         #expect(prompt.attributes["payloadOriginalBytes"] == "50000")
         let done = events.first { $0.name == "done" }!
         #expect(String(data: done.payload!, encoding: .utf8) == "tiny")
-        // artifact 全体が劇的に小さくなっている（53KB → 数 KB）
+        // Capping per event shrinks the whole artifact by an order of magnitude, which is what
+        // keeps a 50 KB prompt from living on disk as 71 KB of base64.
         #expect(artifact!.data.count < 5_000)
     }
 

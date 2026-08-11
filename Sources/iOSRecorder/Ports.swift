@@ -1,6 +1,9 @@
 import Foundation
 
-/// 計測の文脈。Source に渡される。
+/// What a source is told about the capture in flight: which session, which screen, which caller attributes.
+///
+/// Every source in one capture receives the same value, so it is also the way two sources agree on what they
+/// were looking at.
 public struct RecordContext: Sendable {
     public let session: SessionID
     public let screenName: String?
@@ -13,13 +16,20 @@ public struct RecordContext: Sendable {
     }
 }
 
-/// 計測ポート: 何を測るか。種別ごとに 1 実装（拡張軸）。
+/// One thing worth measuring when a capture happens; adding a kind of evidence means adding a conformance.
+///
+/// ``Session`` runs every source concurrently and drops the `nil` results, so returning `nil` means "nothing to
+/// record this time". There is no way to report a failure — a source that cannot measure is indistinguishable
+/// from one with nothing to say.
 public protocol Source: Sendable {
     var kind: ArtifactKind { get }
     func measure(_ context: RecordContext) async -> Artifact?
 }
 
-/// 保持ポート: 保存・検索・取得・全削除（コアのユースケース本体）。
+/// Where captures live once taken, and the only part of the core an app has to choose an implementation for.
+///
+/// Implementations set their own eviction policy, so a capture can disappear without anyone deleting it:
+/// ``fetch(_:)`` on an evicted id throws ``RecordStoreError/notFound(_:)``.
 public protocol RecordStore: Sendable {
     func save(_ record: Record) async throws
     func query(_ query: RecordQuery) async throws -> [RecordSummary]
@@ -28,9 +38,12 @@ public protocol RecordStore: Sendable {
     func removeAll() async throws
 }
 
-/// 出力ポート: 保持した記録を外へ出す能力（Bonjour / iCloud / file …）。
+/// Sends a saved capture somewhere off the device — a Bonjour receiver, iCloud, a file.
+///
+/// ``Session`` treats exporting as best effort: a thrown error becomes an ``ExportOutcome`` and never reaches
+/// the code that asked for the capture. Wrap in ``OutboxExporter`` when a failed send must be retried.
 public protocol Exporter: Sendable {
-    /// 観測用ラベル（どの出力経路か）。既定は型名。
+    /// Names this route in every ``ExportOutcome``, so a failure can be traced to one exporter. Defaults to the type name.
     var label: String { get }
     func export(_ record: Record) async throws
 }
@@ -39,12 +52,14 @@ public extension Exporter {
     var label: String { String(describing: type(of: self)) }
 }
 
-/// 受信ポート（下流の消費者側）: Export の対向。
+/// The receiving end of an ``Exporter``, implemented on the machine collecting captures rather than the device.
+///
+/// Records arrive as a throwing stream, so a transport failure ends the stream rather than arriving as an element.
 public protocol RecordReceiver: Sendable {
     func records() -> AsyncThrowingStream<Record, any Error>
 }
 
-/// 直列化ポート: ワイヤ形式（JSON / Protobuf …）。
+/// Turns a capture into bytes for the wire and back; both ends of a transport must agree on one.
 public protocol RecordCodec: Sendable {
     func encode(_ record: Record) throws -> Data
     func decode(_ data: Data) throws -> Record
@@ -57,12 +72,14 @@ public enum RecordStoreError: Error, Sendable, Equatable {
 public enum ExporterError: Error, Sendable, Equatable {
     case notImplemented(String)
     case transportFailed(String)
-    /// 記録が転送路の上限を超えていて、再試行しても永遠に送れない。
-    /// outbox はこれを退避せず破棄してよい（先頭詰まり防止）。
+    /// The record is bigger than the transport will ever accept, so retrying cannot help.
+    ///
+    /// ``OutboxExporter`` deletes these rather than queueing them; one oversized record would
+    /// otherwise sit at the head of the queue and block everything behind it.
     case payloadTooLarge(bytes: Int)
 }
 
-/// 保持領域の使用状況。MCP の get_storage_info が返す。
+/// How much a device has accumulated and where it sits; this is what the MCP `get_storage_info` tool answers with.
 public struct StorageInfo: Sendable, Codable, Equatable {
     public let totalRecords: Int
     public let totalBytes: Int
@@ -85,7 +102,7 @@ public struct StorageInfo: Sendable, Codable, Equatable {
     }
 }
 
-/// 保持領域の使用状況を報告できる能力（Store 実装が任意で備える）。
+/// Optional for a ``RecordStore``: without a conformance the MCP `get_storage_info` tool has nothing to answer with.
 public protocol StorageReporting: Sendable {
     func storageInfo() async -> StorageInfo
 }

@@ -1,7 +1,10 @@
 import Foundation
 import Observation
 
-/// 通信ログのライブバッファ。新しい順に積み、上限を超えたら古いものを捨てる。
+/// Live buffer of intercepted traffic, newest first, dropping the oldest past `capacity`.
+///
+/// Memory only: nothing survives a relaunch, and a request older than the last `capacity` ones is
+/// gone even if a capture happens a second later.
 @MainActor
 @Observable
 public final class NetworkLogStore {

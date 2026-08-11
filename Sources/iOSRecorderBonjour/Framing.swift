@@ -1,9 +1,10 @@
 import Foundation
 
-/// 4 バイトのビッグエンディアン長プレフィックス + payload。
+/// The wire format both ends agree on: a 4-byte big-endian length, then that many payload bytes.
 enum Framing {
-    /// 1 フレームの上限。壊れた/悪意ある長さプレフィックス（最大 4GB）で
-    /// 受信側が巨大メモリ確保に突入しないための防壁。正常な記録はこれを大きく下回る。
+    /// Largest payload one frame may carry. A 4-byte length can claim up to 4 GB, so without a cap
+    /// a corrupt or hostile prefix would make the receiver allocate that much; real records are far
+    /// smaller. Senders reject oversized records instead of connecting.
     static let maxPayloadBytes = 64 * 1024 * 1024
 
     static func isAcceptableLength(_ length: Int) -> Bool {
@@ -26,7 +27,8 @@ enum Framing {
     }
 }
 
-/// CheckedContinuation を 1 度だけ resume するための小箱（Network のコールバックは複数回来る）。
+/// Resumes a `CheckedContinuation` at most once. Network framework state handlers fire repeatedly
+/// — a ready connection that later fails calls back twice — and resuming twice traps.
 final class ResumeOnce<T>: @unchecked Sendable {
     private let lock = NSLock()
     private var done = false

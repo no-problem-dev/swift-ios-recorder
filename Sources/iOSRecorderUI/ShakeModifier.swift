@@ -6,7 +6,8 @@ extension Notification.Name {
 }
 
 public extension View {
-    /// シェイク検知でアクションを発火（iOS のみ。他プラットフォームでは no-op）。
+    /// Runs an action when the device is shaken; where UIKit is unavailable the view is returned untouched
+    /// and the action never fires.
     func onShake(perform action: @escaping () -> Void) -> some View {
         #if canImport(UIKit)
         onReceive(NotificationCenter.default.publisher(for: .recorderShake)) { _ in action() }

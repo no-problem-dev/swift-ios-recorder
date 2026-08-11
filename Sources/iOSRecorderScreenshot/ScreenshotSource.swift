@@ -2,12 +2,16 @@
 import UIKit
 import iOSRecorder
 
-/// 実行中のキーウィンドウを drawHierarchy でラスタライズする Source。
-/// `ImageRenderer` と違い UIViewRepresentable のネイティブ要素も確実に写る。
+/// Rasterizes the running key window with `drawHierarchy`, which — unlike `ImageRenderer` — also
+/// captures native `UIViewRepresentable` content.
 ///
-/// 保存形式は縮小 JPEG。フル解像度 PNG（iPhone 16 Pro で 1 枚 5MB 超）はメモリ・転送・
-/// ディスクの支配的コストであり、MCP が AI に渡す画像も同じ上限に縮小されるため
-/// ソース段階で縮小しても情報は失われない。
+/// The recorder's own overlay window is skipped, so the floating buttons never appear in a shot.
+/// A capture where no window can be found produces no artifact at all and no error: the record is
+/// stored without a screenshot.
+///
+/// The stored form is always a downscaled JPEG. A full-resolution PNG runs past 5 MB per frame on an
+/// iPhone 16 Pro and dominates memory, transfer and disk cost, and the image handed to the AI is capped
+/// at the same ceiling anyway, so shrinking this early loses nothing.
 public struct ScreenshotSource: Source {
     public let kind = ArtifactKind.screenshot
     private let scale: CGFloat
@@ -15,9 +19,9 @@ public struct ScreenshotSource: Source {
     private let jpegQuality: CGFloat
 
     /// - Parameters:
-    ///   - scale: レンダリング解像度。0 ならデバイススケール。
-    ///   - maxDimension: 出力画像の長辺上限 px。0 で無制限（原寸）。
-    ///   - jpegQuality: JPEG 品質（0–1）。
+    ///   - scale: Rendering scale; 0 uses the device's own scale.
+    ///   - maxDimension: Longest-edge ceiling in pixels for the stored image; 0 keeps the rendered size.
+    ///   - jpegQuality: JPEG quality (0–1).
     public init(scale: CGFloat = 0, maxDimension: CGFloat = 1024, jpegQuality: CGFloat = 0.8) {
         self.scale = scale
         self.maxDimension = maxDimension
@@ -25,7 +29,7 @@ public struct ScreenshotSource: Source {
     }
 
     public func measure(_ context: RecordContext) async -> Artifact? {
-        // drawHierarchy だけが MainActor 必須。重いエンコードは外で行い UI を固めない。
+        // Only drawHierarchy has to be on the main actor; the costly encode runs off it so the UI never freezes.
         let rendered = await MainActor.run { Self.render(scale: scale) }
         guard let rendered else { return nil }
         guard let data = Self.encode(rendered.image, maxDimension: maxDimension, quality: jpegQuality) else { return nil }
@@ -47,7 +51,8 @@ public struct ScreenshotSource: Source {
         return (image, window.bounds)
     }
 
-    /// 長辺を maxDimension に収めて JPEG 化する。UIGraphicsImageRenderer はスレッド安全。
+    /// Fits the longest edge into `maxDimension` and encodes JPEG, off the main actor because
+    /// `UIGraphicsImageRenderer` is thread-safe.
     private static func encode(_ image: UIImage, maxDimension: CGFloat, quality: CGFloat) -> Data? {
         let pixelSize = CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
         let target = ScreenshotSizing.fitted(pixelSize, maxDimension: maxDimension)
@@ -63,7 +68,7 @@ public struct ScreenshotSource: Source {
 
     @MainActor
     static func keyWindow() -> UIWindow? {
-        // 計器用オーバーレイウィンドウ（透明）は除外し、アプリ本体のウィンドウを撮る。
+        // Skip the transparent overlay window so the recorder's own buttons stay out of the shot.
         let windows = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)

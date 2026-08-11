@@ -1,6 +1,9 @@
 import Foundation
 
-/// 1 回の export 試行の結果。握り潰さず観測できるようにするための記録。
+/// The result of one export attempt, kept so a failed delivery stays visible instead of vanishing.
+///
+/// `error` holds the thrown error's description; it is the only trace of a failure, since exporting never
+/// throws back to whoever asked for the capture.
 public struct ExportOutcome: Sendable, Equatable, Codable {
     public let recordID: RecordID
     public let exporter: String
@@ -17,13 +20,13 @@ public struct ExportOutcome: Sendable, Equatable, Codable {
     }
 }
 
-/// あるキャプチャの配送状態（UI 表示用に畳んだ要約）。
+/// What a list row can say about one capture's delivery, folded down from its per-exporter outcomes.
 public enum DeliveryState: Sendable, Equatable {
-    /// exporter が無い（保持のみ）。
+    /// No exporter is attached, so the capture only ever existed on the device.
     case notExported
-    /// 全 exporter 成功。
+    /// Every exporter accepted it.
     case delivered
-    /// まだ未送 or 送信失敗（再送待ち）。
+    /// Not sent yet, or the last attempt failed; `reason` carries the error text when there was one.
     case pending(reason: String?)
 
     public var isDelivered: Bool { if case .delivered = self { return true } else { return false } }

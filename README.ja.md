@@ -2,52 +2,29 @@
 
 # swift-ios-recorder
 
-開発中の iOS アプリの実行時を**計測して保持する**オンデバイス計器。撮った記録（スクショ + state + ログ）を Mac / MCP / AI へ流して、UI 確認ループの手作業を無くす。
+開発中の iOS アプリが実際に何をしているか（画面・アプリ自身の状態・通信・ログ）を Mac 上の AI コーディングエージェントに見せる。UI の変更確認を、手でタップしてスクショを撮るループから外すためのもの。
 
 ![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)
 ![Platforms](https://img.shields.io/badge/Platforms-iOS%2017.0+%20%7C%20macOS%2014.0+-blue.svg)
 ![SPM](https://img.shields.io/badge/Swift_Package_Manager-compatible-brightgreen.svg)
 
-## 本質
+## 概要
 
-**計測（measure）+ 保持（retain）が核。** Mac 連携・MCP 連携はその上に載る能力の 1 つ。
-詳細な設計は [spec.md](./spec.md) を参照。
+ルートの View に modifier を 1 つ付けるとフロートボタンが出る。押すか端末を振ると、その場で
+キャプチャを 1 件取る。スクリーンショット、自分で選んでエンコードしたアプリの状態、直近の HTTP
+通信、直近のログが、1 つのタイムスタンプの下にまとまる。
 
-## 構成
+キャプチャは撮ったそばから同一ネットワークの Mac へ届く。同梱の実行ファイルを MCP サーバーとして
+登録すれば、コーディングエージェントが一覧・取得・イベント検索をできる。つまり、エージェントは
+自分が今変えた画面を、こちらが言葉で説明しなくても見られる。
 
-| モジュール | 役割 |
-|---|---|
-| `iOSRecorder` | コア。Record / Artifact / 各ポート / Session / RingBufferStore / Log・StateSource（依存ゼロ） |
-| `iOSRecorderScreenshot` | `ScreenshotSource`（UIKit drawHierarchy、iOS） |
-| `iOSRecorderUI` | SwiftUI 統合（フロートボタン・シェイク・アプリ内ビューア） |
-| `iOSRecorderBonjour` | Exporter / Receiver（同一 LAN 即時転送、Network framework） |
-| `iOSRecorderStore` | RecordStore のファイル実装（Mac、1 record = 1 フォルダ） |
-| `iOSRecorderMCP` | RecordStore を `list_captures` / `get_capture` / `search_events` / `get_event` に橋渡し（MCP stdio） |
-| `ios-recorder` | Mac companion exe（`serve` / `mcp`） |
-
-## インストール
-
-```swift
-// Package.swift
-dependencies: [
-    .package(url: "https://github.com/no-problem-dev/swift-ios-recorder.git", .upToNextMinor(from: "0.6.0"))
-]
-```
-
-```swift
-.target(name: "YourTarget", dependencies: [
-    .product(name: "iOSRecorder", package: "swift-ios-recorder"),           // コア（計測 + 保持）
-    .product(name: "iOSRecorderUI", package: "swift-ios-recorder"),         // SwiftUI 統合
-    .product(name: "iOSRecorderScreenshot", package: "swift-ios-recorder"), // スクショ計測（iOS）
-    .product(name: "iOSRecorderBonjour", package: "swift-ios-recorder"),    // 同一 LAN の Mac へ転送
-])
-```
-
-Mac companion（`ios-recorder` 実行ファイル）はこのリポジトリを `swift build` してビルドする。
+ソースは個別に選べる。スクショだけでもよいし、状態・通信・ログを必要に応じて足せる。Mac が
+いなければアプリ内でキャプチャを閲覧できる。出荷するものではないので、デバッグビルドにだけ
+組み込むこと。
 
 ## 使い方
 
-### iOS アプリ側（DEBUG 限定）
+### iOS アプリ側
 
 ```swift
 import iOSRecorder
@@ -62,35 +39,60 @@ let session = Session(
         StateSource(encoding: { await appState.snapshot() })
     ],
     store: store,
-    exporters: [BonjourExporter()]   // 同一 LAN の Mac へ即時送信
+    exporters: [BonjourExporter()]   // 同一ネットワークの Mac へ送る
 )
 let controller = RecorderController(session: session, store: store)
 
-// ルートに 1 行。タップ/シェイクで計測、長押しで一覧。
+// ルートに 1 行。タップ / シェイクで計測、長押しで一覧。
 ContentView().recorder(controller)
 ```
+
+`BonjourExporter` は Bonjour のブラウズで Mac を見つけるので、アプリにローカルネットワーク権限と
+`Info.plist` の `NSLocalNetworkUsageDescription` が要る。許可が下りるまでキャプチャは撮れて保存も
+されるが、端末から出て行かない。
 
 ### Mac 側
 
 ```sh
-# Claude Code に MCP 登録するだけ。受信機は MCP プロセスに同居し、
-# Claude Code の起動/終了に連動して起動/停止する（別デーモン不要）。
 claude mcp add ios-recorder -- ios-recorder mcp
 ```
 
-これで iPhone でフロートボタンを押す → Mac に届く → Claude Code が
-`list_captures` / `get_capture`(maxDimension で縮小) / `search_events` / `get_event` / `delete_capture` / `clear_captures`
-で画面+state を取得、という UI 確認ループが閉じる。
+受信機は MCP プロセスに同居するので、エージェントの起動・終了に連動する。別に常駐させるデーモンは
+無い。登録後は、端末でボタンを押せばキャプチャがエージェントの手元に届き、`list_captures` /
+`get_capture` / `search_events` / `get_event` で読める。受信機だけを単体で動かしたい場合は
+`ios-recorder serve`。
 
-`ios-recorder serve` は受信機のみを単体起動する headless 運用向けの代替手段。
+> バイナリを置き換えたら `codesign --force --sign - <path>` で再署名すること。上書きコピーすると
+> ad-hoc 署名が無効になり、起動時にプロセスが落とされる。
 
-> バイナリ更新時はコピー後に `codesign --force --sign - <path>` で再署名すること
-> （ad-hoc 署名が無効化され起動時に SIGKILL されるため）。
+## ドキュメント
 
-## 開発
+[API ドキュメント](https://no-problem-dev.github.io/swift-ios-recorder/documentation/iosrecorder/)
 
-```sh
-swift build && swift test          # 48 tests / 13 suites
-# iOS 専用ターゲットのコンパイル確認:
-xcodebuild build -scheme iOSRecorderUI -destination 'generic/platform=iOS'
+## インストール
+
+```swift
+// Package.swift
+dependencies: [
+    .package(url: "https://github.com/no-problem-dev/swift-ios-recorder.git", .upToNextMinor(from: "0.6.0"))
+]
 ```
+
+```swift
+.target(name: "YourTarget", dependencies: [
+    .product(name: "iOSRecorder", package: "swift-ios-recorder"),           // コア
+    .product(name: "iOSRecorderUI", package: "swift-ios-recorder"),         // SwiftUI 統合
+    .product(name: "iOSRecorderScreenshot", package: "swift-ios-recorder"), // スクリーンショット
+    .product(name: "iOSRecorderBonjour", package: "swift-ios-recorder"),    // Mac への転送
+])
+```
+
+Mac 側の相棒は `ios-recorder` 実行ファイル。このリポジトリを `swift build` して作る。
+
+## コントリビュート
+
+[CONTRIBUTING.md](./CONTRIBUTING.md) を参照。
+
+## ライセンス
+
+MIT。[LICENSE](./LICENSE) を参照。

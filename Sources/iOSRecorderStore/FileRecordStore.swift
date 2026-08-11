@@ -1,28 +1,46 @@
 import Foundation
 import iOSRecorder
 
-/// ファイルシステム上の保持実装。1 record = 1 フォルダ（Finder で覗ける）。
+/// Keeps records as plain files, one folder per record, so they can be opened in Finder without
+/// this package.
 ///
 /// ```
 /// <root>/<recordID>/meta.json
 /// <root>/<recordID>/0-screenshot.jpg
 /// <root>/<recordID>/1-state.json
 /// ```
+///
+/// The Mac companion points `root` at `~/.iosrecorder/captures`. Artifacts are written first and
+/// `meta.json` last, and a folder without a readable `meta.json` is ignored everywhere — so a save
+/// cut short leaves files on disk that no query, fetch or retention pass will ever return or remove.
 public actor FileRecordStore: RecordStore, StorageReporting {
     private let rootURL: URL
     private let maxRecords: Int?
     private let fileManager = FileManager.default
-    /// meta.json 全走査の結果キャッシュ。root ディレクトリの mtime が変わらない限り再利用する
-    /// （record の追加/削除はフォルダの作成/削除なので root の mtime に必ず現れる）。
+    /// Result of the last full `meta.json` sweep, reused until the root directory's modification
+    /// time changes. Adding or deleting a record creates or removes a folder, which always shows up
+    /// there — including when another process does it, which is how `serve` and `mcp` stay in step.
     private var cachedMeta: [StoredRecord] = []
     private var cacheStamp: Date?
 
-    /// - Parameter maxRecords: 指定すると save 時に古い記録を自動削除して件数を保つ。
+    /// - Parameters:
+    ///   - rootURL: Directory that holds one folder per record. Created on the first save; it does
+    ///     not have to exist yet.
+    ///   - maxRecords: Cap on kept records. Each save deletes the oldest folders beyond it, by
+    ///     recorded time rather than by size. Without it the directory grows without bound.
     public init(rootURL: URL, maxRecords: Int? = nil) {
         self.rootURL = rootURL
         self.maxRecords = maxRecords
     }
 
+    /// Writes the record's artifacts and then its `meta.json`, and prunes to `maxRecords`.
+    ///
+    /// Saving an id that already exists overwrites files position by position; artifact files left
+    /// over from a longer previous version of the same record stay on disk, unreferenced by the new
+    /// `meta.json`.
+    ///
+    /// - Throws: Whatever the file system reports. A throw part-way through leaves a folder that no
+    ///   query will list, since `meta.json` is written last.
     public func save(_ record: Record) async throws {
         let recordDir = rootURL.appendingPathComponent(record.id.rawValue, isDirectory: true)
         try fileManager.createDirectory(at: recordDir, withIntermediateDirectories: true)
@@ -63,6 +81,10 @@ public actor FileRecordStore: RecordStore, StorageReporting {
         return Array(summaries.prefix(query.limit))
     }
 
+    /// Reads a record back with its artifact bytes loaded.
+    ///
+    /// - Throws: `RecordStoreError.notFound` when the folder or its `meta.json` is missing or
+    ///   unreadable; a file system error when `meta.json` names an artifact file that is not there.
     public func fetch(_ id: RecordID) async throws -> Record {
         let recordDir = rootURL.appendingPathComponent(id.rawValue, isDirectory: true)
         let metaURL = recordDir.appendingPathComponent("meta.json")
@@ -83,12 +105,16 @@ public actor FileRecordStore: RecordStore, StorageReporting {
         return meta.record(artifacts: artifacts)
     }
 
+    /// Removes one record's folder. Succeeds whether or not it was there, and reports nothing when
+    /// the file system refuses.
     public func delete(_ id: RecordID) async throws {
         let recordDir = rootURL.appendingPathComponent(id.rawValue, isDirectory: true)
         try? fileManager.removeItem(at: recordDir)
         invalidateCache()
     }
 
+    /// Empties the root directory. Everything directly inside it goes, whether or not it looks like
+    /// a record, so point `rootURL` at a directory this store owns.
     public func removeAll() async throws {
         guard let dirs = try? fileManager.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: nil) else { return }
         for dir in dirs {
@@ -97,7 +123,9 @@ public actor FileRecordStore: RecordStore, StorageReporting {
         invalidateCache()
     }
 
-    /// 件数・総バイト数・記録の時間範囲。MCP の get_storage_info が返す。
+    /// Count, bytes on disk and the span of recorded times — what the `get_storage_info` tool
+    /// reports. The byte total walks every file under the root, so it includes leftovers that the
+    /// count does not.
     public func storageInfo() async -> StorageInfo {
         let metas = loadAllMeta()
         let dates = metas.map(\.recordedAt)
@@ -118,7 +146,8 @@ public actor FileRecordStore: RecordStore, StorageReporting {
 
     // MARK: - Helpers
 
-    /// 新しい順に maxRecords 件だけ残して古いフォルダを削除する。
+    /// Keeps the newest `maxRecords` folders and deletes the rest. Ordered by recorded time, not by
+    /// write time, so a record that arrives late with an old timestamp is the first to go.
     private func pruneToLimit(_ maxRecords: Int) {
         let metas = loadAllMeta().sorted { $0.recordedAt > $1.recordedAt }
         guard metas.count > maxRecords else { return }
@@ -136,7 +165,8 @@ public actor FileRecordStore: RecordStore, StorageReporting {
     }
 
     private func loadAllMeta() -> [StoredRecord] {
-        // 別プロセス（serve 単体運用）による変更も root の mtime で検知する。
+        // Reading the root's timestamp also picks up changes made by another process, which is the
+        // case when `serve` receives while `mcp` reads.
         if let stamp = rootModificationDate(), stamp == cacheStamp { return cachedMeta }
 
         guard let dirs = try? fileManager.contentsOfDirectory(

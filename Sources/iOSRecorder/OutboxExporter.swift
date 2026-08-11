@@ -1,18 +1,20 @@
 import Foundation
 
-/// 未送分を再送・観測・破棄できる能力。UI から pending を見せたり drain したりするためのポート。
+/// Lets a debug UI show how many captures are still waiting to be sent, and retry or abandon them.
 public protocol OutboxDraining: Sendable {
     @discardableResult
     func drain() async -> Int
     func pendingCount() async -> Int
-    /// 未送分を送らずにすべて破棄する。破棄した件数を返す。
+    /// Throws away everything queued without sending it.
+    /// - Returns: How many were waiting before the wipe.
     @discardableResult
     func discardAll() async -> Int
 }
 
-/// 別の Exporter を包み、送信失敗分を永続ストアに退避して後で再送する合成 Exporter。
-/// テザリングの不安定さ・受信機停止・アプリ再起動をまたいで「取りこぼしゼロ」を保証する。
-/// core のポート（Exporter / RecordStore）だけで構成されるので core に置ける。
+/// Wraps another exporter and parks whatever fails to send, so a later pass can deliver it.
+///
+/// This is what carries captures across a flaky tethered link, a stopped receiver, or an app relaunch — but only
+/// as far as the outbox store reaches, so an in-memory outbox loses its queue when the process ends.
 public actor OutboxExporter: Exporter, OutboxDraining {
     private let inner: any Exporter
     private let outbox: any RecordStore
@@ -20,9 +22,9 @@ public actor OutboxExporter: Exporter, OutboxDraining {
     public nonisolated let label: String
 
     /// - Parameters:
-    ///   - inner: 実際に送る Exporter（例: BonjourExporter）。
-    ///   - outbox: 未送分の退避先（例: iOS 上の FileRecordStore）。
-    ///   - scanLimit: drain / pendingCount が一度に走査する上限件数。
+    ///   - inner: The exporter that actually sends, such as the Bonjour one.
+    ///   - outbox: Where unsent captures wait. Back it with disk if the queue must survive a relaunch.
+    ///   - scanLimit: How many captures one drain or count pass looks at; anything beyond it is invisible to both.
     public init(wrapping inner: any Exporter, outbox: any RecordStore, scanLimit: Int = 10_000) {
         self.inner = inner
         self.outbox = outbox
@@ -33,19 +35,21 @@ public actor OutboxExporter: Exporter, OutboxDraining {
     public func export(_ record: Record) async throws {
         do {
             try await inner.export(record)
-            try? await outbox.delete(record.id)   // 成功したら退避分も掃除
+            try? await outbox.delete(record.id)   // Sent, so drop any copy an earlier failure left behind
         } catch ExporterError.payloadTooLarge(let bytes) {
-            // 再試行しても永遠に送れないものは退避しない（outbox の先頭詰まり防止）。
+            // Never queue what can never be sent; it would sit at the head and block everything behind it.
             throw ExporterError.payloadTooLarge(bytes: bytes)
         } catch {
-            try? await outbox.save(record)         // 失敗は退避し、再送に委ねる
+            try? await outbox.save(record)         // Park it and let a later drain deliver it
             throw error
         }
     }
 
-    /// 退避済みを古い順に再送する。到達回復時・起動時に呼ぶ。送れた件数を返す。
-    /// 一時的な失敗なら以降は次の機会に回す（順序と無駄打ちの抑制）。
-    /// 恒久的に送れないもの（payloadTooLarge）は破棄して次へ進む。
+    /// Resends what is parked, oldest first — call it when the receiver comes back or the app starts.
+    ///
+    /// The first transient failure ends the pass, which keeps the order intact and spares a run of pointless
+    /// retries; captures too large to ever send are deleted and the pass carries on.
+    /// - Returns: How many captures left the outbox.
     @discardableResult
     public func drain() async -> Int {
         let summaries = ((try? await outbox.query(RecordQuery(limit: scanLimit))) ?? [])
@@ -66,12 +70,13 @@ public actor OutboxExporter: Exporter, OutboxDraining {
         return sent
     }
 
-    /// 未送（退避中）の件数。
+    /// How many captures are parked, counted no further than `scanLimit` — a longer queue reports as exactly that.
     public func pendingCount() async -> Int {
         ((try? await outbox.query(RecordQuery(limit: scanLimit))) ?? []).count
     }
 
-    /// 未送分を送らずにすべて破棄する。古い送信失敗分が要らなくなった時の掃除用。
+    /// Empties the outbox without sending, for when old failures are no longer worth delivering.
+    /// - Returns: The count observed before the wipe, which `scanLimit` can cap below the true figure.
     @discardableResult
     public func discardAll() async -> Int {
         let count = await pendingCount()

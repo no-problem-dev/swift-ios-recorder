@@ -1,7 +1,8 @@
 import Foundation
 
-/// 解釈結果の構造化レポート。オンデバイスでドメインデータを「読める形」に変換した成果物。
-/// markdown() でアーティファクト/MCP 向けテキストに落とせる。
+/// A titled set of sections produced on device, turning domain data into something a person or an agent can read.
+///
+/// ``markdown()`` renders it as the text that goes into an artifact or an MCP response.
 public struct DebugReport: Sendable, Codable, Equatable {
     public struct Section: Sendable, Codable, Equatable {
         public let title: String
@@ -30,14 +31,15 @@ public struct DebugReport: Sendable, Codable, Equatable {
     }
 }
 
-/// ドメインデータ（ServerMessage[] / イベント列 等）を構造化レポートに変換する解釈器。
-/// Swift のドメイン型が在るオンデバイス側に実装を置く。
+/// Turns data this package knows nothing about — a message list, a run of events — into a readable report.
+///
+/// Conformances belong in the app, where the Swift domain types actually exist.
 public protocol DebugInterpreter: Sendable {
     associatedtype Input
     func interpret(_ input: Input) -> DebugReport
 }
 
-/// イベント列から導出する定量メトリクス。
+/// One number derived from a run of events, carrying the unit and grouping needed to display it.
 public struct DebugMetric: Sendable, Codable, Equatable {
     public let name: String
     public let value: Double
@@ -52,7 +54,7 @@ public struct DebugMetric: Sendable, Codable, Equatable {
     }
 }
 
-/// `DebugEvent` 列からメトリクスを抽出する計測器。
+/// Derives numbers from a timeline; ``MetricsSource`` runs every extractor at capture time and folds the results together.
 public protocol MetricExtractor: Sendable {
     func metrics(from events: [DebugEvent]) -> [DebugMetric]
 }

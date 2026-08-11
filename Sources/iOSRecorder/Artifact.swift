@@ -1,6 +1,9 @@
 import Foundation
 
-/// 中身の種別。typed だが開いている（新種は定数を足さずとも生成できる）。
+/// Names what an artifact holds, and what ``RecordQuery/kinds`` filters on.
+///
+/// Deliberately open: an app can mint its own kind with `init(rawValue:)` without this package adding a constant,
+/// and the new kind still travels through storage, transport, and MCP untouched.
 public struct ArtifactKind: RawRepresentable, Hashable, Sendable {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
@@ -22,8 +25,10 @@ extension ArtifactKind: Codable {
     }
 }
 
-/// 計測された 1 つの中身。data はコアにとって不透明 — 新種が増えても
-/// 通信・保存・MCP は無改修で流せる。
+/// One measured payload, carrying the media type a reader needs to make sense of the bytes.
+///
+/// The core never looks inside `data`. That is what lets a new kind of evidence reach a consumer without any
+/// change to storage, the wire format, or the MCP layer.
 public struct Artifact: Sendable, Codable, Equatable {
     public let kind: ArtifactKind
     public let mediaType: String

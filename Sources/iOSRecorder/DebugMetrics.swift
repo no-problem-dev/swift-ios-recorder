@@ -1,10 +1,13 @@
 import Foundation
 
-/// イベントを `category.name` 単位で数える汎用メトリクス抽出器。
-/// ドメイン固有コード不要で、正規化済み DebugEvent から tool_call 数や decode_failed 数等を出せる。
+/// Counts events grouped by `category.name`, which covers most of what a timeline is asked, with no domain code.
+///
+/// A group that never occurred produces no metric at all rather than a zero, so an absent `decode_failed` row
+/// means nothing happened, not that counting failed.
 public struct CountMetricExtractor: MetricExtractor {
     private let category: String?
 
+    /// - Parameter category: Count only within this category; `nil` counts every event in the timeline.
     public init(category: String? = nil) {
         self.category = category
     }
@@ -20,7 +23,10 @@ public struct CountMetricExtractor: MetricExtractor {
     }
 }
 
-/// 最初と最後のイベントの時間差（タイムライン全体の所要時間）を出す抽出器。
+/// Measures how long the whole timeline spans, from earliest event to latest.
+///
+/// Yields nothing when there are fewer than two distinct timestamps, so a single event reports no duration
+/// rather than zero.
 public struct SpanMetricExtractor: MetricExtractor {
     public init() {}
 

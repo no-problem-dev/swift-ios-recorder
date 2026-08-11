@@ -1,15 +1,15 @@
 import Foundation
 
-/// デバッグ UI の「既定はコンパクト、展開はオンデマンド」ポリシー。
-/// 巨大 payload・深い JSON・大量配列でも一覧性とスクロール性能を守る。
+/// The limits behind the debug UI's "folded until asked" rule for large values.
+/// They are what keeps a huge payload, a deep JSON tree or a very long array readable and scrolling.
 enum CompactDisplay {
-    /// 長文テキストの折り畳みプレビュー文字数。
+    /// Characters of a long text block shown before the rest is folded away.
     static let textPreviewLimit = 600
-    /// 文字列リーフ（JSON の値）の折り畳みプレビュー文字数。
+    /// Characters of a string value inside a JSON tree shown before the rest is folded away.
     static let leafPreviewLimit = 200
-    /// オブジェクト/配列の子を最初に見せる件数。
+    /// Children rendered when an object or array first appears; the rest wait behind a reveal button.
     static let initialChildren = 30
-    /// 「さらに表示」1 回で増やす件数。
+    /// Children added by each tap of the reveal button.
     static let childrenStep = 100
 
     static func preview(_ text: String, limit: Int) -> (shown: String, truncated: Bool) {
@@ -17,7 +17,7 @@ enum CompactDisplay {
         return (String(text.prefix(limit)), true)
     }
 
-    /// 構造ツリーはトップレベルだけ開き、深い階層は折り畳んでおく。
+    /// Only the top level of a structured tree opens on its own; anything deeper starts folded.
     static func expandedByDefault(depth: Int) -> Bool {
         depth == 0
     }

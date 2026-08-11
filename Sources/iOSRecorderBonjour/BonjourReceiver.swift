@@ -2,8 +2,11 @@ import Foundation
 import Network
 import iOSRecorder
 
-/// Mac 側で TCP を待ち受け、iPhone からの framed な記録を受け取る Receiver。
-/// `serviceName` を指定すると Bonjour でも広告する（同一 LAN 自動発見）。
+/// Accepts length-prefixed `Record` frames over TCP from a device on the same LAN.
+///
+/// Nothing is advertised until `serviceName` is supplied, so a receiver created without one is
+/// reachable only by explicit host and port — which is also how tests avoid the local network
+/// permission prompt that advertising triggers.
 public final class BonjourReceiver: @unchecked Sendable {
     private let listener: NWListener
     private let codec: any RecordCodec
@@ -14,15 +17,17 @@ public final class BonjourReceiver: @unchecked Sendable {
     private let stream: AsyncThrowingStream<Record, any Error>
     private let continuation: AsyncThrowingStream<Record, any Error>.Continuation
 
-    /// TCP リスナーを初期化する。`start()` を呼ぶまで待ち受けは始まらない。
+    /// Builds the TCP listener without binding it; nothing is accepted until `start()` runs.
     ///
     /// - Parameters:
-    ///   - serviceName: Bonjour 広告名。指定すると同一 LAN に `_iosrecorder._tcp` でサービスを広告し、
-    ///     デバイス側から自動発見できるようになる。`nil` の場合は広告なし（IP 直打ち専用）。
-    ///   - serviceType: Bonjour サービスタイプ。既定値 `_iosrecorder._tcp` を変える必要は通常ない。
-    ///   - port: 待ち受けポート。`.any`（既定値）を指定すると OS が空きポートを選択し、
-    ///     `start()` 後に `resolvedPort` で確認できる。
-    ///   - codec: フレームの符号化・復号化を担う `RecordCodec`。既定値は `JSONRecordCodec`。
+    ///   - serviceName: Name to advertise the listener under. Supplying it publishes the service on
+    ///     the local network so devices can discover it; `nil` publishes nothing and the device has
+    ///     to be given the host and port directly.
+    ///   - serviceType: Bonjour service type. Both ends default to `_iosrecorder._tcp`, so changing
+    ///     it here means changing it on the exporter too.
+    ///   - port: Port to bind. `.any` lets the OS pick a free one, readable from `resolvedPort`
+    ///     once `start()` has returned.
+    ///   - codec: Wire format for frames. Must match the exporter's codec or every frame is dropped.
     public init(
         serviceName: String? = nil,
         serviceType: String = "_iosrecorder._tcp",
@@ -42,14 +47,23 @@ public final class BonjourReceiver: @unchecked Sendable {
         listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
     }
 
-    /// 受信した `Record` を逐次返す `AsyncThrowingStream`。
+    /// Every frame that decodes, in arrival order.
     ///
-    /// ストリームは以下の条件で終了する:
-    /// - `stop()` を呼び出すと正常終了（`finish()`）する。
-    /// - リスナーが障害状態（`.failed`）に遷移すると、その `NWError` を投げてエラー終了する。
+    /// A frame that fails to decode is dropped without a trace: it does not appear here and does
+    /// not end the sequence, so a codec mismatch looks exactly like a silent sender.
+    ///
+    /// The sequence ends when:
+    /// - `stop()` is called, which finishes it normally.
+    /// - The listener fails, which throws the underlying `NWError`.
+    ///
+    /// All callers share one sequence, so two iterations split the frames between them rather than
+    /// each seeing every frame.
     public func records() -> AsyncThrowingStream<Record, any Error> { stream }
 
-    /// 待ち受けが始まり port が確定するまで待つ。
+    /// Binds the listener and waits until it is ready, which is when the port becomes known.
+    ///
+    /// - Throws: The listener's `NWError` if it cannot bind — most often because the requested port
+    ///   is already taken.
     public func start() async throws {
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, any Error>) in
             lock.lock()
@@ -60,8 +74,14 @@ public final class BonjourReceiver: @unchecked Sendable {
         }
     }
 
+    /// The bound port, or `nil` before `start()` has returned — the value a device needs when the
+    /// listener was created with `.any` and no Bonjour name.
     public var resolvedPort: UInt16? { listener.port?.rawValue }
 
+    /// Stops accepting new connections and finishes `records()` normally.
+    ///
+    /// Peers that are already connected are not disconnected here; their sockets stay open until
+    /// the peer closes them or the process exits.
     public func stop() {
         listener.cancel()
         continuation.finish()
@@ -102,7 +122,8 @@ public final class BonjourReceiver: @unchecked Sendable {
             if let header, header.count == 4 {
                 let length = Framing.readLength(header)
                 guard Framing.isAcceptableLength(length) else {
-                    // 上限超の長さプレフィックス = 壊れたデータか悪意あるピア。即切断。
+                    // An over-limit prefix means a corrupt or hostile peer. Hang up rather than
+                    // allocate a buffer that big; other connections keep being served.
                     connection.cancel()
                     return
                 }

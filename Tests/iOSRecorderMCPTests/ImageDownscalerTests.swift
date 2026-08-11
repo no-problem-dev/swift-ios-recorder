@@ -6,7 +6,8 @@ import UniformTypeIdentifiers
 @testable import iOSRecorderMCP
 
 @Suite struct ImageDownscalerTests {
-    /// 2000x2000 の PNG を生成する。
+    /// A solid-colour square PNG standing in for a screenshot. Flat colour compresses hard, so the
+    /// byte comparisons stay meaningful rather than measuring JPEG noise.
     private func makePNG(side: Int) -> Data {
         let context = CGContext(
             data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,

@@ -47,7 +47,8 @@ import iOSRecorderTestSupport
     }
 }
 
-/// 恒久的に送れない（大きすぎる）記録が outbox の先頭詰まりを起こさないこと。
+/// Rejects anything named `big…` the way a transport rejects an oversized record: permanently, so
+/// retrying can never help. Used to prove such a record does not wedge the head of the outbox.
 private actor SizeRejectingExporter: Exporter {
     public private(set) var exported: [Record] = []
     nonisolated let label = "SizeRejecting"
@@ -66,13 +67,14 @@ private actor SizeRejectingExporter: Exporter {
         await #expect(throws: ExporterError.self) {
             try await exporter.export(RecordFixtures.make(id: RecordID(rawValue: "big1")))
         }
-        #expect(await exporter.pendingCount() == 0)   // 再送不能なものは退避しない
+        #expect(await exporter.pendingCount() == 0)   // Nothing that can never be resent is kept
     }
 
     @Test func drainDropsTooLargeAndContinues() async throws {
         let inner = SizeRejectingExporter()
         let outbox = FakeRecordStore()
-        // 過去に退避済みの「大きすぎる」記録が先頭にある状況を再現
+        // Recreate an outbox whose oldest entry is one an earlier version had already stashed and
+        // that can never be sent.
         try await outbox.save(RecordFixtures.make(
             id: RecordID(rawValue: "big-legacy"), recordedAt: Date(timeIntervalSince1970: 1)))
         try await outbox.save(RecordFixtures.make(
@@ -81,9 +83,9 @@ private actor SizeRejectingExporter: Exporter {
         let exporter = OutboxExporter(wrapping: inner, outbox: outbox)
         let sent = await exporter.drain()
 
-        #expect(sent == 1)                              // ok1 は送れた
+        #expect(sent == 1)                              // ok1 got through
         #expect(await inner.exportedCount() == 1)
-        #expect(await exporter.pendingCount() == 0)     // big-legacy は破棄され詰まらない
+        #expect(await exporter.pendingCount() == 0)     // big-legacy was dropped rather than left blocking
     }
 }
 
@@ -99,7 +101,7 @@ private actor SizeRejectingExporter: Exporter {
         let discarded = await exporter.discardAll()
         #expect(discarded == 3)
         #expect(await exporter.pendingCount() == 0)
-        #expect(await flaky.exportedCount() == 0)   // 送らずに破棄
+        #expect(await flaky.exportedCount() == 0)   // Discarded outright, never sent
     }
 
     @Test func discardAllOnEmptyOutboxReturnsZero() async {

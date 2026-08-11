@@ -1,6 +1,10 @@
 import Foundation
 
-/// ストレージ非依存の検索条件。in-memory な Store は `matches(_:)` をそのまま使える。
+/// The filter every store understands, stated without reference to how records are kept.
+///
+/// `text` searches metadata only — screen name, tags, attributes — never artifact bytes, so a string that appears
+/// solely inside a log or a state dump is not findable. An in-memory store can satisfy its whole query duty with
+/// ``matches(_:)``.
 public struct RecordQuery: Sendable, Equatable {
     public var session: SessionID?
     public var screenName: String?
@@ -25,6 +29,9 @@ public struct RecordQuery: Sendable, Equatable {
         self.limit = limit
     }
 
+    /// Whether one summary passes every condition that was set.
+    ///
+    /// `limit` is not applied here — a store that filters with this still has to trim the result itself.
     public func matches(_ summary: RecordSummary) -> Bool {
         if let session, summary.session != session { return false }
         if let screenName, summary.metadata.screenName != screenName { return false }

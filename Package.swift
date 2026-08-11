@@ -9,30 +9,31 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        // コア: 計測 + 保持（プラットフォーム非依存・依存ゼロ）
+        // Core: measuring and keeping. Platform independent, no dependencies.
         .library(name: "iOSRecorder", targets: ["iOSRecorder"]),
-        // 能力（capability）: 周辺。差し替え可能なアダプタ群
+        // Capabilities: replaceable adapters around the core.
         .library(name: "iOSRecorderUI", targets: ["iOSRecorderUI"]),
         .library(name: "iOSRecorderScreenshot", targets: ["iOSRecorderScreenshot"]),
         .library(name: "iOSRecorderNetwork", targets: ["iOSRecorderNetwork"]),
         .library(name: "iOSRecorderBonjour", targets: ["iOSRecorderBonjour"]),
         .library(name: "iOSRecorderStore", targets: ["iOSRecorderStore"]),
         .library(name: "iOSRecorderMCP", targets: ["iOSRecorderMCP"]),
-        // 下流の消費者（Mac companion）
+        // The downstream consumer: the Mac companion.
         .executable(name: "ios-recorder", targets: ["ios-recorder"])
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
-        // 任意データの構造表示（DebugTimeline 詳細）に使う。モノレポ各所と同じ URL identity。
+        // Structured display of arbitrary payloads in the debug timeline detail view.
+        // Same URL identity as everywhere else in the monorepo.
         .package(url: "https://github.com/no-problem-dev/swift-structured-data.git", from: "3.0.0"),
-        // デバッグ UI のデザイントークン/コンポーネント。UI 層（iOSRecorderUI）でのみ使う。
+        // Design tokens and components for the debug UI. Used by iOSRecorderUI only.
         .package(url: "https://github.com/no-problem-dev/swift-design-system.git", from: "3.0.0"),
     ],
     targets: [
-        // ── コア ──────────────────────────────────────────────
+        // ── Core ──────────────────────────────────────────────
         .target(name: "iOSRecorder"),
 
-        // ── 能力アダプタ ───────────────────────────────────────
+        // ── Capability adapters ───────────────────────────────
         .target(
             name: "iOSRecorderUI",
             dependencies: [
@@ -48,16 +49,16 @@ let package = Package(
         .target(name: "iOSRecorderStore", dependencies: ["iOSRecorder"]),
         .target(name: "iOSRecorderMCP", dependencies: ["iOSRecorder"]),
 
-        // ── 合成ルート（Mac exe） ──────────────────────────────
+        // ── Composition root (Mac executable) ─────────────────
         .executableTarget(
             name: "ios-recorder",
             dependencies: ["iOSRecorder", "iOSRecorderStore", "iOSRecorderBonjour", "iOSRecorderMCP"]
         ),
 
-        // ── テスト基盤: ポートを差し替えるための共有 Fake/Fixture ──
+        // ── Test support: shared fakes and fixtures for the ports ──
         .target(name: "iOSRecorderTestSupport", dependencies: ["iOSRecorder"]),
 
-        // ── テストターゲット（ターゲット境界ごとに独立検証） ──────
+        // ── Test targets: one per target boundary, verified alone ──
         .testTarget(
             name: "iOSRecorderTests",
             dependencies: ["iOSRecorder", "iOSRecorderTestSupport"]

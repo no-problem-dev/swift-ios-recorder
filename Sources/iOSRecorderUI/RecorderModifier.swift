@@ -3,8 +3,8 @@ import DesignSystem
 import iOSRecorder
 
 public extension View {
-    /// 計器 UI（フロートボタン + デバッグパネル + シェイク）を載せる。DEBUG 限定で呼ぶ。
-    /// ボタンは普段隠れていて、シェイクで表示/非表示をトグル。📷 タップで撮影、🐞 タップでデバッグパネル。
+    /// Attaches the floating buttons, the debug panel and shake handling; keep the call inside DEBUG builds.
+    /// The buttons stay hidden until a shake toggles them: 📷 takes a capture, 🐞 opens the panel.
     func recorder(_ controller: RecorderController) -> some View {
         modifier(RecorderModifier(controller: controller))
     }
@@ -23,8 +23,8 @@ struct RecorderModifier: ViewModifier {
     @ViewBuilder
     private func placement(_ content: Content) -> some View {
         #if canImport(UIKit)
-        // ボタンは別ウィンドウに載せる（スクショに写り込まない & 本体タッチを妨げない）
-        // controller を環境に流して .recorderScreen(_:) から参照できるようにする
+        // The buttons live in a separate window: out of every screenshot, out of the app's touch path
+        // The controller goes into the environment so .recorderScreen(_:) can find it
         content
             .environment(controller)
             .background(OverlayInstaller(controller: controller))

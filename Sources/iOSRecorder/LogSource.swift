@@ -1,7 +1,9 @@
 import Foundation
 
-/// 直近のログ行を保持する固定長バッファ。アプリのログ出力先に append しておき、
-/// 計測時に snapshot を Record へ添える。
+/// Holds the last `capacity` log lines so a capture can carry recent output along with it.
+///
+/// Point the app's logging at ``append(_:)``; older lines fall off the front, and ``snapshot()`` joins what is
+/// left with newlines.
 public actor LogBuffer {
     private var lines: [String] = []
     private let capacity: Int
@@ -26,7 +28,7 @@ public actor LogBuffer {
     }
 }
 
-/// 直近のログを計測する Source。空なら artifact を作らない。
+/// Attaches whatever text the provider returns at capture time; empty text yields no artifact rather than an empty one.
 public struct LogSource: Source {
     public let kind = ArtifactKind.log
     private let provider: @Sendable () async -> String

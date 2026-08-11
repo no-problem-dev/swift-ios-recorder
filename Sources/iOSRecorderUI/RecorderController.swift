@@ -5,51 +5,58 @@ import iOSRecorder
 import iOSRecorderNetwork
 import iOSRecorderBonjour
 
-/// 計器 UI の状態を持つコントローラ。UIKit 非依存なので隔離テストできる。
+/// Main-actor state behind the floating buttons and the debug panel, holding no UIKit so tests can drive it directly.
 @MainActor
 @Observable
 public final class RecorderController {
     public let session: Session
     private let store: any RecordStore
     public let items: [DebugItem]
-    /// 通信ライブモニタ（任意・独立サブシステム）。あればパネルに Network が出る。
+    /// Live network monitor; when non-nil the panel gains a Network section.
     public let network: NetworkLogStore?
-    /// Mac 受信デーモンの到達性（任意）。あればパネルに接続状態が出る。
+    /// Probe for the Mac receiver; when non-nil the panel shows a connection row.
+    ///
+    /// A denied Local Network permission is indistinguishable from a Mac that is simply not running:
+    /// the probe never reports reachable and the row keeps saying the Mac is not connected.
     public let reachability: ExportReachability?
-    /// 未送分の退避・再送（任意）。あればパネルに pending 件数が出て、到達時に自動 drain。
+    /// Spool for captures that failed to send; when non-nil the panel shows the pending count and a
+    /// background loop retries them as soon as the Mac is reachable again.
     public let outbox: (any OutboxDraining)?
-    /// デバッグイベントのライブログ（任意）。あればパネルに Debug タイムラインが出る。
+    /// Live debug event log; when non-nil the panel gains a timeline section.
     public let debugLog: DebugLog?
-    /// 利用側が差し込むメトリクス（任意）。あればパネルにメトリクス・ダッシュボードが出る。
+    /// Metrics supplied by the app; when non-nil the panel gains a dashboard section.
     public let metrics: MetricsStore?
-    /// パネルの画面構成（任意）。未指定なら存在するストアから既定構成を自動合成する。
+    /// Panel layout; when nil a default layout is composed from whichever stores were supplied.
     public let console: DebugConsole?
-    /// 計器 UI に適用するデザインシステムのテーマ。利用側ブランドに合わせて差し替え可能。
+    /// Design system theme for the recorder UI, so the panel can follow the host app's brand.
     public let theme: ThemeProvider
     public private(set) var summaries: [RecordSummary] = []
-    /// キャプチャごとの配送状態（delivered / pending）。refresh で更新。
+    /// Delivery state per capture as of the last refresh; it does not follow later deliveries on its own.
     public private(set) var deliveryStates: [RecordID: DeliveryState] = [:]
-    /// 未送（退避中）件数。
+    /// Captures still held by the outbox, recounted on every refresh and on every auto-drain tick.
     public private(set) var pendingCount = 0
     public var isPresentingPanel = false
-    /// フロートボタン群（📷 / 🐞）の表示状態。iOS では既定で隠れていて、シェイクでトグルする。
-    /// シェイクの無い macOS では常時表示。
+    /// Hidden on iOS until a shake toggles the 📷 / 🐞 buttons, and always true on macOS, which has no shake.
     #if canImport(UIKit)
     public var isOverlayVisible = false
     #else
     public var isOverlayVisible = true
     #endif
     public var captureScreenName = ""
-    /// 現在表示中の画面名。`.recorderScreen(_:)` が設定し、撮影時に自動付与される。
+    /// Name of the screen on display, set by `.recorderScreen(_:)` and attached to any capture that
+    /// does not carry a name of its own.
     public var currentScreen: String?
     @ObservationIgnored private var autoDrainTask: Task<Void, Never>?
 
-    /// コントローラを初期化する。
+    /// Creates the state for one capture session and its store.
     ///
-    /// 任意引数はすべて `nil` 可。渡した引数に応じてパネルに表示される機能が増える:
-    /// `network` → ネットワークタブ、`reachability` → 接続状態、
-    /// `outbox` → pending 件数と自動再送、`debugLog` → デバッグタイムライン、
-    /// `metrics` → メトリクスダッシュボード。
+    /// Every optional argument may be `nil`; each one supplied adds a section to the panel:
+    /// `network` a network list, `reachability` the connection row,
+    /// `outbox` the pending count plus automatic retries, `debugLog` the event timeline,
+    /// `metrics` the dashboard.
+    ///
+    /// - Important: passing `outbox` starts the retry loop immediately, and it keeps running until
+    ///   `stopAutoDrain()` is called — deallocating this object does not stop it.
     public init(
         session: Session,
         store: any RecordStore,
@@ -75,8 +82,11 @@ public final class RecorderController {
         if outbox != nil { startAutoDrain() }
     }
 
-    /// バックグラウンドで未送分を自動再送するループ。pending があり到達できれば送る。
-    /// パネルを開かなくても、接続が回復すれば数秒で勝手に届く。
+    /// Starts the loop that retries spooled captures whenever the Mac is reachable, so they arrive
+    /// within seconds of the connection coming back and nobody has to open the panel.
+    ///
+    /// Does nothing without an outbox, and does nothing if the loop is already running.
+    /// - Parameter interval: Wait between attempts.
     public func startAutoDrain(interval: Duration = .seconds(5)) {
         guard outbox != nil, autoDrainTask == nil else { return }
         autoDrainTask = Task { @MainActor [weak self] in
@@ -87,7 +97,7 @@ public final class RecorderController {
         }
     }
 
-    /// 自動再送ループを停止する。
+    /// Cancels the retry loop, which nothing else does — not even deallocating this object.
     public func stopAutoDrain() {
         autoDrainTask?.cancel()
         autoDrainTask = nil
@@ -101,18 +111,24 @@ public final class RecorderController {
         if await outbox.drain() > 0 { await refresh() }
     }
 
-    /// 現在の画面を計測して保持し、一覧を更新する。
+    /// Measures the current screen, stores the result and reloads the list.
+    ///
+    /// Failures are swallowed: a store that refuses the write leaves the list unchanged and tells the
+    /// caller nothing.
+    /// - Parameter screenName: Name to record; when nil the name set by `.recorderScreen(_:)` is used.
     public func capture(screenName: String? = nil) async {
         _ = try? await session.capture(screenName: screenName ?? currentScreen)
         await refresh()
     }
 
-    /// 指定キャプチャの配送状態。
+    /// Delivery state seen by the last refresh; an ID that was never refreshed reads as pending, not as an error.
     public func deliveryState(for id: RecordID) -> DeliveryState {
         deliveryStates[id] ?? .pending(reason: nil)
     }
 
-    /// 退避中を含めて未送分を再送する。
+    /// Sends one capture again and drains the spool, then reloads the list.
+    ///
+    /// A capture the store can no longer produce is skipped without a word, and the spool is drained anyway.
     public func resend(_ id: RecordID) async {
         if let record = try? await store.fetch(id) {
             await session.reexport(record)
@@ -121,16 +137,21 @@ public final class RecorderController {
         await refresh()
     }
 
-    /// パネルで入力された画面名を使って撮影する。
+    /// Captures under the name typed into the panel, trimming whitespace and clearing the field afterwards.
+    ///
+    /// A field holding only spaces counts as empty and falls back to the screen name in effect.
     public func captureWithEnteredName() async {
         let trimmed = captureScreenName.trimmingCharacters(in: .whitespacesAndNewlines)
         await capture(screenName: trimmed.isEmpty ? nil : trimmed)
         captureScreenName = ""
     }
 
-    /// ストアから記録一覧・配送状態・pending 件数を再取得してプロパティを更新する。
+    /// Reloads at most 100 of the newest captures, their delivery states and the pending count.
+    ///
+    /// Nothing else updates these properties, so a capture delivered in the background stays shown as
+    /// pending until the next call.
     public func refresh() async {
-        // 到達できているなら退避分を自動再送してから一覧を更新する。
+        // Push the spool out first while the Mac is within reach, so a capture that just left shows as delivered.
         if let outbox, reachability?.isReachable ?? true {
             await outbox.drain()
         }
@@ -143,17 +164,19 @@ public final class RecorderController {
         pendingCount = await outbox?.pendingCount() ?? 0
     }
 
-    /// 指定 ID の完全な `Record`（全 artifact 込み）を取得する。見つからなければ `nil`。
+    /// Loads a whole record with every artifact attached, which the list summaries deliberately leave out.
+    /// - Returns: `nil` for an unknown ID and for a store that failed to read it — the two are not distinguished.
     public func record(for id: RecordID) async -> Record? {
         try? await store.fetch(id)
     }
 
-    /// `record` をエクスポータに再送する。配送済みの記録を手動で再送したい場合に使う。
+    /// Hands a record to the exporters again, for pushing an already delivered capture by hand.
     public func reexport(_ record: Record) async {
         await session.reexport(record)
     }
 
-    /// 保存済み記録をすべて削除し、一覧を更新する。
+    /// Deletes every stored capture and reloads the list; there is no undo, and whatever already reached
+    /// the Mac stays there.
     public func removeAll() async {
         try? await store.removeAll()
         await refresh()

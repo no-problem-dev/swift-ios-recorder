@@ -2,13 +2,16 @@ import Foundation
 import iOSRecorder
 
 public extension ArtifactKind {
-    /// 直近の HTTP 通信ログ。新種を core に足さず、生産者（このターゲット）側で定義する。
+    /// Recent HTTP traffic. Declared by the target that produces it rather than by the core, which
+    /// is how a new kind gets added without touching the core.
     static let network = ArtifactKind(rawValue: "network")
 }
 
-/// ライブな通信バッファを capture 時点でスナップショットし、1 つの Artifact にする Source。
-/// 連続ストリームを「1 トリガ = 1 Record」の不変項に合わせて畳み込む。
-/// 外に出す前に機密ヘッダのマスクとボディ truncate を必ず通す。
+/// Folds the live traffic buffer into one JSON artifact at the moment of capture.
+///
+/// The buffer is a continuous stream and a record is a single instant, so what lands in the record
+/// is the newest `maxEntries` exchanges as they stood when the trigger fired — including ones that
+/// started long before it. Every entry goes through `NetworkLog.redacted(bodyLimit:)` on the way.
 public struct NetworkSource: Source {
     public let kind = ArtifactKind.network
     private let store: NetworkLogStore
