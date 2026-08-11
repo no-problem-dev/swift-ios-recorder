@@ -27,7 +27,7 @@ let package = Package(
         // Same URL identity as everywhere else in the monorepo.
         .package(url: "https://github.com/no-problem-dev/swift-structured-data.git", from: "3.0.0"),
         // Design tokens and components for the debug UI. Used by iOSRecorderUI only.
-        .package(url: "https://github.com/no-problem-dev/swift-design-system.git", from: "3.0.0"),
+        .package(url: "https://github.com/no-problem-dev/swift-design-system.git", from: "4.0.0"),
     ],
     targets: [
         // ── Core ──────────────────────────────────────────────
