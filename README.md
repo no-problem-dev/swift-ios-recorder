@@ -30,7 +30,7 @@ See [spec.md](./spec.md) for the detailed design.
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/no-problem-dev/swift-ios-recorder.git", .upToNextMinor(from: "0.5.0"))
+    .package(url: "https://github.com/no-problem-dev/swift-ios-recorder.git", .upToNextMinor(from: "0.6.0"))
 ]
 ```
 
