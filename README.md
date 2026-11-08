@@ -69,7 +69,7 @@ on its own.
 
 ## Documentation
 
-[API documentation](https://no-problem-dev.github.io/swift-ios-recorder/documentation/iosrecorder/)
+[API documentation](Sources/iOSRecorder/iOSRecorder.docc)
 
 ## Installation
 

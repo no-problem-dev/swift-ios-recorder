@@ -67,7 +67,7 @@ claude mcp add ios-recorder -- ios-recorder mcp
 
 ## ドキュメント
 
-[API ドキュメント](https://no-problem-dev.github.io/swift-ios-recorder/documentation/iosrecorder/)
+[API ドキュメント](Sources/iOSRecorder/iOSRecorder.docc)
 
 ## インストール
 
