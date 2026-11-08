@@ -22,7 +22,6 @@ let package = Package(
         .executable(name: "ios-recorder", targets: ["ios-recorder"])
     ],
     dependencies: [
-        .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
         // Structured display of arbitrary payloads in the debug timeline detail view.
         // Same URL identity as everywhere else in the monorepo.
         .package(url: "https://github.com/no-problem-dev/swift-structured-data.git", from: "3.0.0"),
